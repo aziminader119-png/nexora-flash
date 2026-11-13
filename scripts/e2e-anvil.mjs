@@ -138,7 +138,13 @@ async function common({provider, net, exe, owner, operator, treasury, stable, se
   assert.ok(exC.journal.events.some((e) => e.status === 'cancel_submitted'), 'cancellation replacement must be submitted before mining');
   await provider.send('evm_mine', []);
   assert.deepEqual(await exC.reconcile(net), {pending: 0});
-  assert.equal(await provider.getTransactionReceipt(stuck.hashes[0]), null, 'original never mined');
+  // Assert against Anvil's freshly mined block, not a missing historical
+  // receipt hash (public Base RPCs may refuse archive lookup with HTTP 403).
+  const cancel = exC.journal.events.find((e) => e.status === 'cancel_submitted' && e.nonce === stuck.nonce);
+  assert.ok(cancel?.hash, 'same-nonce cancellation exists');
+  const minedBlock = await provider.send('eth_getBlockByNumber', ['latest', false]);
+  assert.ok(minedBlock.transactions.some((h) => h.toLowerCase() === cancel.hash.toLowerCase()), 'cancellation mined in local fork block');
+  assert.ok(!minedBlock.transactions.some((h) => h.toLowerCase() === stuck.hashes[0].toLowerCase()), 'original transaction never mined');
   assert.equal(await bal(), tBefore);
   pass('stuck transaction cancelled', `nonce ${stuck.nonce}`);
   await provider.send('evm_setAutomine', [true]);

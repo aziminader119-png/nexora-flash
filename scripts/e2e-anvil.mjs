@@ -192,8 +192,8 @@ async function local() {
 }
 
 async function fork() {
-  const rpc = process.env.BASE_RPC_URL;
-  if (!rpc) throw Error('BASE_RPC_URL is required for fork mode');
+  const rpc = process.env.BASE_RPC_URL || NETWORKS.find((n) => n.id === 8453).rpcDefault;
+  if (!rpc) throw Error('Base RPC endpoint unavailable for fork mode');
   const {proc, provider} = await startAnvil(['--fork-url', rpc]);
   try {
     const base = withEnvProviders(NETWORKS.find((n) => n.id === 8453));

@@ -16,6 +16,13 @@ interface IV2Router {
     function getAmountsOut(uint256, address[] calldata) external view returns (uint256[] memory);
     function swapExactTokensForTokens(uint256, uint256, address[] calldata, address, uint256) external returns (uint256[] memory);
 }
+interface IV3RouterFork {
+    struct ExactInputSingleParams {
+        address tokenIn; address tokenOut; uint24 fee; address recipient; uint256 deadline;
+        uint256 amountIn; uint256 amountOutMinimum; uint160 sqrtPriceLimitX96;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata) external payable returns (uint256);
+}
 interface IQuoterV2 {
     struct QuoteExactInputSingleParams { address tokenIn; address tokenOut; uint256 amountIn; uint24 fee; uint160 sqrtPriceLimitX96; }
     function quoteExactInputSingle(QuoteExactInputSingleParams memory) external returns (uint256, uint160, uint32, uint256);
@@ -46,7 +53,7 @@ abstract contract ForkArbBase is TestBase {
         address stable; address wrapped;
         address aavePool; address balancerVault; address morpho;
         address v2Router; address v2Factory;
-        address v3Router; uint8 v3Kind; address quoter;
+        address v3Router; uint8 v3Kind; address quoter; uint24 buyV3Fee;
     }
 
     address constant OPERATOR = address(0xB0B);
@@ -70,8 +77,10 @@ abstract contract ForkArbBase is TestBase {
         _requireCode(n.stable, "stable");
         _requireCode(n.wrapped, "wrapped");
         _requireCode(n.aavePool, "aave pool");
-        _requireCode(n.v2Router, "v2 router");
-        _requireCode(n.v2Factory, "v2 factory");
+        if (n.buyV3Fee == 0) {
+            _requireCode(n.v2Router, "v2 router");
+            _requireCode(n.v2Factory, "v2 factory");
+        }
         _requireCode(n.v3Router, "v3 router");
         _requireCode(n.quoter, "quoter");
 
@@ -79,17 +88,19 @@ abstract contract ForkArbBase is TestBase {
         exe.setProvider(n.aavePool, 1);
         if (n.balancerVault != address(0) && n.balancerVault.code.length > 0) exe.setProvider(n.balancerVault, 2);
         if (n.morpho != address(0) && n.morpho.code.length > 0) exe.setProvider(n.morpho, 3);
-        exe.setRouter(n.v2Router, true);
+        if (n.buyV3Fee == 0) exe.setRouter(n.v2Router, true);
         exe.setRouter(n.v3Router, true);
         exe.setToken(n.stable, true);
         exe.setToken(n.wrapped, true);
 
         // $1,000 pilot size, reduced only if the V2 pool is too small to absorb it.
         uint256 unit = 10 ** IERC20F(n.stable).decimals();
-        (uint256 rStable,) = _reserves();
         loan = 1000 * unit;
-        if (loan > rStable / 50) loan = rStable / 50;
-        require(loan >= 10 * unit, "V2 pool too small for a meaningful fork test");
+        if (n.buyV3Fee == 0) {
+            (uint256 rStable,) = _reserves();
+            if (loan > rStable / 50) loan = rStable / 50;
+            require(loan >= 10 * unit, "V2 pool too small for a meaningful fork test");
+        }
         exe.setMaxLoan(n.stable, loan);
         exe.unpause();
     }
@@ -108,22 +119,45 @@ abstract contract ForkArbBase is TestBase {
 
     /// Dump wrapped native into the real V2 pool: wrapped becomes cheap on V2 relative to V3.
     function _dislocate() internal {
-        (, uint256 rWrapped) = _reserves();
-        uint256 dump = rWrapped / 8;
+        uint256 dump;
+        if (n.buyV3Fee != 0) {
+            // V3-only fork route: deliberate fork-local price perturbation.
+            dump = 25 ether;
+        } else {
+            (, uint256 rWrapped) = _reserves();
+            dump = rWrapped / 8;
+        }
         vm.deal(address(this), dump + 1 ether);
         IWrapped(n.wrapped).deposit{value: dump}();
-        IERC20F(n.wrapped).approve(n.v2Router, dump);
-        address[] memory path = new address[](2);
-        path[0] = n.wrapped; path[1] = n.stable;
-        IV2Router(n.v2Router).swapExactTokensForTokens(dump, 0, path, address(0xDEAD), block.timestamp);
+        if (n.buyV3Fee != 0) {
+            IERC20F(n.wrapped).approve(n.v3Router, dump);
+            IV3RouterFork(n.v3Router).exactInputSingle(IV3RouterFork.ExactInputSingleParams({
+                tokenIn: n.wrapped, tokenOut: n.stable, fee: n.buyV3Fee,
+                recipient: address(0xDEAD), deadline: block.timestamp,
+                amountIn: dump, amountOutMinimum: 0, sqrtPriceLimitX96: 0
+            }));
+        } else {
+            IERC20F(n.wrapped).approve(n.v2Router, dump);
+            address[] memory path = new address[](2);
+            path[0] = n.wrapped; path[1] = n.stable;
+            IV2Router(n.v2Router).swapExactTokensForTokens(dump, 0, path, address(0xDEAD), block.timestamp);
+        }
     }
 
     function _quotes() internal returns (uint256 buyOut, uint256 sellOut, uint24 fee) {
-        address[] memory path = new address[](2);
-        path[0] = n.stable; path[1] = n.wrapped;
-        buyOut = IV2Router(n.v2Router).getAmountsOut(loan, path)[1];
+        if (n.buyV3Fee != 0) {
+            (buyOut,,,) = IQuoterV2(n.quoter).quoteExactInputSingle(IQuoterV2.QuoteExactInputSingleParams({
+                tokenIn: n.stable, tokenOut: n.wrapped, amountIn: loan,
+                fee: n.buyV3Fee, sqrtPriceLimitX96: 0
+            }));
+        } else {
+            address[] memory path = new address[](2);
+            path[0] = n.stable; path[1] = n.wrapped;
+            buyOut = IV2Router(n.v2Router).getAmountsOut(loan, path)[1];
+        }
         uint24[4] memory tiers = [uint24(100), 500, 2500, 3000];
         for (uint256 i = 0; i < tiers.length; i++) {
+            if (tiers[i] == n.buyV3Fee) continue;
             try IQuoterV2(n.quoter).quoteExactInputSingle(IQuoterV2.QuoteExactInputSingleParams({
                 tokenIn: n.wrapped, tokenOut: n.stable, amountIn: buyOut, fee: tiers[i], sqrtPriceLimitX96: 0
             })) returns (uint256 out, uint160, uint32, uint256) {
@@ -143,7 +177,11 @@ abstract contract ForkArbBase is TestBase {
         p.minProfit = minProfit;
         p.deadline = block.timestamp + 120;
         p.legs = new NexoraFlashExecutor.Leg[](2);
-        p.legs[0] = NexoraFlashExecutor.Leg(n.v2Router, 0, n.stable, n.wrapped, 0, buyOut);
+        if (n.buyV3Fee != 0) {
+            p.legs[0] = NexoraFlashExecutor.Leg(n.v3Router, n.v3Kind, n.stable, n.wrapped, n.buyV3Fee, buyOut);
+        } else {
+            p.legs[0] = NexoraFlashExecutor.Leg(n.v2Router, 0, n.stable, n.wrapped, 0, buyOut);
+        }
         p.legs[1] = NexoraFlashExecutor.Leg(n.v3Router, n.v3Kind, n.wrapped, n.stable, fee, sellOut);
     }
 

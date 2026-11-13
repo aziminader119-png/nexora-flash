@@ -63,3 +63,15 @@ test('contract: critical protections present in source', () => {
   for (const s of ['bool public paused = true', 'require(msg.sender == activeProvider', 'require(keccak256(data) == activePlanHash', 'require(fee <= p.maxFee', '"insufficient profit"', 'onlyOperator', 'function unpause() external onlyOwner'])
     assert.ok(c.includes(s), s);
 });
+
+
+test('nonce safety: every JsonRpcProvider disables the ethers request cache', () => {
+  for (const f of ['lib/chain-ethers.mjs', 'scripts/e2e-anvil.mjs', 'scripts/deploy.mjs']) {
+    const src = read(f);
+    const ctors = src.match(/new JsonRpcProvider\([^)]*\)/g) || [];
+    assert.ok(ctors.length > 0, f);
+    for (const c of ctors) assert.match(c, /cacheTimeout: -1/, `${f}: ${c}`);
+  }
+  const e2e = read('scripts/e2e-anvil.mjs');
+  assert.doesNotMatch(e2e, /for \(const \w+ of \[exe\.\w+\(/);
+});

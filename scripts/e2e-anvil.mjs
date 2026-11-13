@@ -174,7 +174,7 @@ async function local() {
     await send(rich.setRate(Wt, U, 2000_000000n, 10n ** 18n));
     const exe = await deploy(owner, 'NexoraFlashExecutor.sol', 'NexoraFlashExecutor', owner.address, operator.address, treasury);
     const E = await exe.getAddress();
-    for (const p of [exe.setProvider(A, 1), exe.setRouter(C, true), exe.setRouter(R, true), exe.setToken(U, true), exe.setToken(Wt, true), exe.setMaxLoan(U, 1000_000000n), exe.unpause()]) await send(p);
+    for (const action of [() => exe.setProvider(A, 1), () => exe.setRouter(C, true), () => exe.setRouter(R, true), () => exe.setToken(U, true), () => exe.setToken(Wt, true), () => exe.setMaxLoan(U, 1000_000000n), () => exe.unpause()]) await send(action());
 
     const codehash = keccak256(await provider.getCode(E));
     const built = keccak256(artifact('NexoraFlashExecutor.sol', 'NexoraFlashExecutor').deployedBytecode.object);

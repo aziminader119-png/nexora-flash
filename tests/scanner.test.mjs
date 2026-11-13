@@ -74,12 +74,13 @@ test('RPC outage and wrong chain are reported, not hidden', async () => {
   assert.match(b.state.error, /does not match/);
 });
 
-test('gas price above ceiling stops the scan for that network', async () => {
+test('gas price above ceiling shows quotes but never allows execution', async () => {
   const chain = new FakeChain();
   chain.gas.gasPrice = 50n * 10n ** 9n;
   const {state, candidates} = await scanNetwork({chain, net: testNet(), settings: settings({maxGasGwei: 5})});
-  assert.match(state.error, /above ceiling/);
-  assert.equal(candidates.length, 0);
+  assert.equal(state.status, 'quotes-live');
+  assert.ok(candidates.length > 0, 'quotes still visible');
+  assert.ok(candidates.every((c) => !c.executable && c.blockers.some((x) => /above ceiling/.test(x))), 'execution blocked');
 });
 
 test('OP-stack networks include the L1 data fee in the gas estimate', async () => {

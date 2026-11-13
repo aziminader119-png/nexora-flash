@@ -122,7 +122,7 @@ abstract contract ForkArbBase is TestBase {
         uint256 dump;
         if (n.buyV3Fee != 0) {
             // V3-only fork route: deliberate fork-local price perturbation.
-            dump = 25 ether;
+            dump = 250 ether;
         } else {
             (, uint256 rWrapped) = _reserves();
             dump = rWrapped / 8;
@@ -212,7 +212,7 @@ abstract contract ForkArbBase is TestBase {
         uint256 treasuryBefore = IERC20F(n.stable).balanceOf(TREASURY);
 
         vm.prank(OPERATOR);
-        (uint256 profit, uint256 paidFee) = exe.start(_plan(provider, buyOut, sellOut, fee, expectedProfit));
+        (uint256 profit, uint256 paidFee) = exe.start(_plan(provider, buyOut, sellOut, fee, 1));
 
         assertEq(paidFee, expectedFee, "lender fee");
         assertEq(profit, expectedProfit, "quote-to-execution: realized profit == quoted output - loan - fee");

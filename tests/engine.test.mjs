@@ -144,6 +144,25 @@ test('pending transaction blocks new broadcasts across a service restart, then r
   assert.ok(r2.journal.events.some((e) => e.status === 'confirmed'));
 });
 
+test('receipt RPC errors fail closed and preserve journaled pending nonce', async () => {
+  const file = tmpFile();
+  const clock = {t: Date.now()};
+  const r = rig({file, clock});
+  r.chain.autoMine = false;
+  assert.equal((await r.ex.attempt(await r.scan(), r.net)).status, 'pending');
+  const r2 = rig({file, clock, chain: r.chain});
+  const realReceipt = r.chain.getReceipt.bind(r.chain);
+  r.chain.getReceipt = async () => { throw Error('could not coalesce error'); };
+  const second = await r2.ex.attempt(await r2.scan(), r2.net);
+  assert.equal(second.status, 'blocked');
+  assert.match(second.reason, /still pending/);
+  assert.equal(r.chain.broadcasts.length, 1, 'must not broadcast another transaction');
+  assert.equal(r2.journal.pending(r.net.id).length, 1, 'pending journal entry must survive RPC failure');
+  r.chain.getReceipt = realReceipt;
+  r.chain.mine();
+  assert.deepEqual(await r2.ex.reconcile(r2.net), {pending: 0});
+});
+
 test('stuck transaction is cancelled with a same-nonce, higher-fee replacement', async () => {
   const r = rig();
   r.chain.autoMine = false;

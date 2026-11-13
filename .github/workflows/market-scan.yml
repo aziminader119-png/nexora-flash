@@ -1,0 +1,35 @@
+name: NEXORA Read-only Market Scan
+# Independent observational smoke test, not a validation gate or trading authorization.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/scan-market-once.mjs'
+      - '.github/workflows/market-scan.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/scan-market-once.mjs'
+      - '.github/workflows/market-scan.yml'
+permissions:
+  contents: read
+jobs:
+  live-market-quote-snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      LIVE_EXECUTION: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - name: Read on-chain quotes on five networks (no wallet and no orders)
+        run: node scripts/scan-market-once.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nexora-read-only-market-snapshot
+          path: validation/market-scan.json
+          if-no-files-found: warn

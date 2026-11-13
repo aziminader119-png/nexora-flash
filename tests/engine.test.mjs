@@ -240,7 +240,9 @@ test('uncertain broadcast error retains pending nonce and prevents another signe
   assert.equal(r.journal.pending()[0].nonce, 0);
   assert.ok(!r.journal.events.some((e) => e.status === 'dropped'));
 
-  const second = await r.ex.attempt(await r.scan(), r.net);
+  const distinctCandidate = await r.scan();
+  distinctCandidate.id += '-next-block';
+  const second = await r.ex.attempt(distinctCandidate, r.net);
   assert.equal(second.status, 'blocked');
   assert.match(second.reason, /still pending/);
   assert.equal(r.chain.broadcasts.length, 0, 'never broadcast a new transaction while first nonce is unresolved');

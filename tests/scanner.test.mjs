@@ -95,5 +95,8 @@ test('provider selection is restricted to gate-eligible lenders when available',
   const {candidates} = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: ['AAVE_V3']});
   assert.equal(candidates[0].provider.kind, 'AAVE_V3', 'Morpho is cheaper but not validated');
   const fallback = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: ['EULER_V2']});
-  assert.equal(fallback.candidates[0].provider.kind, 'MORPHO_BLUE', 'no eligible lender configured: show cheapest (engine will block)');
+  assert.equal(fallback.candidates[0].provider, null, 'an unvalidated lender must never be selected');
+  assert.ok(fallback.candidates.every((c) => !c.executable && c.blockers.some((x) => /no flash provider/.test(x))));
+  const none = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: []});
+  assert.ok(none.candidates.every((c) => !c.executable && c.provider === null), 'empty validated-provider list must fail closed');
 });

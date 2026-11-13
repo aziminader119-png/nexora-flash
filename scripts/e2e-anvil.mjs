@@ -42,7 +42,7 @@ const send = async (p) => (await p).wait();
 
 async function startAnvil(extra) {
   const proc = spawn('anvil', ['--port', String(PORT), '--silent', '--mnemonic', testMnemonic, ...extra], {stdio: ['ignore', 'ignore', 'inherit']});
-  const provider = new JsonRpcProvider(URL, undefined, {staticNetwork: false});
+  const provider = new JsonRpcProvider(URL, undefined, {staticNetwork: false, cacheTimeout: -1});
   for (let i = 0; i < 120; i++) {
     try { await provider.send('eth_chainId', []); return {proc, provider}; } catch { await new Promise((r) => setTimeout(r, 500)); }
   }

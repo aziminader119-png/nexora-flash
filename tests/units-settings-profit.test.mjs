@@ -49,10 +49,11 @@ test('settings: v0.9 file migrates safely', () => {
   assert.deepEqual(loadSettings({loanSize: 'x'}, {}), structuredClone(DEFAULT_SETTINGS));
 });
 
-test('profit: Aave premium matches percentMul half-up', () => {
+test('profit: Aave premium conservatively rounds upward', () => {
   assert.equal(aavePremium(1000_000000n, 5), 500000n);
-  assert.equal(aavePremium(1n, 5000), 1n); // 0.5 rounds up
-  assert.equal(aavePremium(1n, 4999), 0n);
+  assert.equal(aavePremium(12942639n, 5), 6472n); // verified on Polygon fork
+  assert.equal(aavePremium(1n, 5000), 1n); // fractional premium rounds up
+  assert.equal(aavePremium(1n, 4999), 1n);
 });
 
 test('profit: Balancer fee matches FixedPoint.mulUp', () => {

@@ -42,7 +42,7 @@ const send = async (p) => (await p).wait();
 
 async function startAnvil(extra) {
   const proc = spawn('anvil', ['--port', String(PORT), '--silent', '--mnemonic', testMnemonic, ...extra], {stdio: ['ignore', 'ignore', 'inherit']});
-  const provider = new JsonRpcProvider(URL, undefined, {staticNetwork: false});
+  const provider = new JsonRpcProvider(URL, undefined, {staticNetwork: false, cacheTimeout: -1});
   for (let i = 0; i < 120; i++) {
     try { await provider.send('eth_chainId', []); return {proc, provider}; } catch { await new Promise((r) => setTimeout(r, 500)); }
   }
@@ -128,10 +128,23 @@ async function common({provider, net, exe, owner, operator, treasury, stable, se
   assert.equal((await exC.attempt(cands[0], net)).status, 'pending');
   const stuck = exC.journal.pending(net.id)[0];
   const tBefore = await bal();
-  await exC.reconcile(net);
+  // Fork RPCs can briefly fail when querying a pending receipt. Retry recovery
+  // but never mine the original transaction unless a replacement is actually
+  // journaled; otherwise this test could mistake a failed cancellation for success.
+  for (let i = 0; i < 8 && !exC.journal.events.some((e) => e.status === 'cancel_submitted'); i++) {
+    await exC.reconcile(net);
+    if (!exC.journal.events.some((e) => e.status === 'cancel_submitted')) await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.ok(exC.journal.events.some((e) => e.status === 'cancel_submitted'), 'cancellation replacement must be submitted before mining');
   await provider.send('evm_mine', []);
   assert.deepEqual(await exC.reconcile(net), {pending: 0});
-  assert.equal(await provider.getTransactionReceipt(stuck.hashes[0]), null, 'original never mined');
+  // Assert against Anvil's freshly mined block, not a missing historical
+  // receipt hash (public Base RPCs may refuse archive lookup with HTTP 403).
+  const cancel = exC.journal.events.find((e) => e.status === 'cancel_submitted' && e.nonce === stuck.nonce);
+  assert.ok(cancel?.hash, 'same-nonce cancellation exists');
+  const minedBlock = await provider.send('eth_getBlockByNumber', ['latest', false]);
+  assert.ok(minedBlock.transactions.some((h) => h.toLowerCase() === cancel.hash.toLowerCase()), 'cancellation mined in local fork block');
+  assert.ok(!minedBlock.transactions.some((h) => h.toLowerCase() === stuck.hashes[0].toLowerCase()), 'original transaction never mined');
   assert.equal(await bal(), tBefore);
   pass('stuck transaction cancelled', `nonce ${stuck.nonce}`);
   await provider.send('evm_setAutomine', [true]);
@@ -174,7 +187,7 @@ async function local() {
     await send(rich.setRate(Wt, U, 2000_000000n, 10n ** 18n));
     const exe = await deploy(owner, 'NexoraFlashExecutor.sol', 'NexoraFlashExecutor', owner.address, operator.address, treasury);
     const E = await exe.getAddress();
-    for (const p of [exe.setProvider(A, 1), exe.setRouter(C, true), exe.setRouter(R, true), exe.setToken(U, true), exe.setToken(Wt, true), exe.setMaxLoan(U, 1000_000000n), exe.unpause()]) await send(p);
+    for (const action of [() => exe.setProvider(A, 1), () => exe.setRouter(C, true), () => exe.setRouter(R, true), () => exe.setToken(U, true), () => exe.setToken(Wt, true), () => exe.setMaxLoan(U, 1000_000000n), () => exe.unpause()]) await send(action());
 
     const codehash = keccak256(await provider.getCode(E));
     const built = keccak256(artifact('NexoraFlashExecutor.sol', 'NexoraFlashExecutor').deployedBytecode.object);
@@ -192,8 +205,8 @@ async function local() {
 }
 
 async function fork() {
-  const rpc = process.env.BASE_RPC_URL;
-  if (!rpc) throw Error('BASE_RPC_URL is required for fork mode');
+  const rpc = process.env.BASE_RPC_URL || NETWORKS.find((n) => n.id === 8453).rpcDefault;
+  if (!rpc) throw Error('Base RPC endpoint unavailable for fork mode');
   const {proc, provider} = await startAnvil(['--fork-url', rpc]);
   try {
     const base = withEnvProviders(NETWORKS.find((n) => n.id === 8453));

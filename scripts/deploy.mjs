@@ -31,7 +31,7 @@ if (!net0) throw Error('--chain must be one of 56, 8453, 42161, 10, 137');
 const net = withEnvProviders(net0);
 const operator = getAddress(arg('operator') || '');
 const rpc = process.env[`RPC_${chainId}`] || net.rpcDefault;
-const provider = new JsonRpcProvider(rpc, chainId, {staticNetwork: true});
+const provider = new JsonRpcProvider(rpc, chainId, {staticNetwork: true, cacheTimeout: -1});
 if (Number(BigInt(await provider.send('eth_chainId', []))) !== chainId) throw Error('RPC chain id mismatch');
 
 const ks = process.env.DEPLOYER_KEYSTORE;

@@ -1,0 +1,114 @@
+name: NEXORA CI
+# Every job is blocking. A failing critical test fails the workflow and no gate report is published.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  node-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: bash -n install-ubuntu.sh
+
+  solidity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Compile (fails on any compiler error)
+        run: forge build --sizes
+      - name: Unit, security and fuzz tests on local EVM
+        run: forge test --no-match-path 'test/fork/*' -vvv
+
+  e2e-local:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: [node-unit, solidity]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm install --no-audit --no-fund
+      - run: forge build
+      - name: Scanner + executor + ethers adapter against anvil (success, revert, restart, stuck tx, RPC failure, emergency stop)
+        run: node scripts/e2e-anvil.mjs local
+
+  fork:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [solidity]
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [ForkBaseTest, ForkBNBTest, ForkArbitrumTest, ForkOptimismTest, ForkPolygonTest]
+    env:
+      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+      BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
+      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
+      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
+      POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Mainnet-fork atomic arbitrage against real lenders and DEXes
+        run: forge test --match-contract '^${{ matrix.suite }}$' -vvv
+
+  e2e-fork-base:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [e2e-local, fork]
+    env:
+      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm install --no-audit --no-fund
+      - run: forge build
+      - run: node scripts/e2e-anvil.mjs fork
+
+  gate-report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [e2e-fork-base]
+    env:
+      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+      BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
+      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
+      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
+      POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm install --no-audit --no-fund
+      - name: Full validation gate (all fork suites critical)
+        run: node scripts/run-validation.mjs --require-fork
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nexora-gate-report
+          path: |
+            validation/gate-report.json
+            validation/validation-log.md
+            out/NexoraFlashExecutor.sol/NexoraFlashExecutor.json

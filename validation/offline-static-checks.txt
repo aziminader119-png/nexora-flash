@@ -1,0 +1,26 @@
+ok server.js
+ok lib/chain-ethers.mjs
+ok lib/engine.mjs
+ok lib/gates.mjs
+ok lib/journal.mjs
+ok lib/keys.mjs
+ok lib/logger.mjs
+ok lib/networks.mjs
+ok lib/planner.mjs
+ok lib/profit.mjs
+ok lib/scanner.mjs
+ok lib/settings.mjs
+ok lib/units.mjs
+ok scripts/create-operator-key.mjs
+ok scripts/deploy.mjs
+ok scripts/e2e-anvil.mjs
+ok scripts/preflight.mjs
+ok scripts/run-validation.mjs
+ok tests/engine.test.mjs
+ok tests/planner-journal-gates.test.mjs
+ok tests/scanner.test.mjs
+ok tests/security-static.test.mjs
+ok tests/units-settings-profit.test.mjs
+ok tests/helpers/fake-chain.mjs
+ok install-ubuntu.sh (bash -n)
+checked; bad = 0

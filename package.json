@@ -1,0 +1,25 @@
+{
+  "name": "nexora-flash-arbitrage",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Atomic flash-loan arbitrage executor, scanner and dashboard (Aave V3, Balancer V2, Morpho Blue, Euler V2; Uniswap/PancakeSwap/SushiSwap/QuickSwap V2/V3).",
+  "engines": {"node": ">=20.11"},
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.mjs",
+    "build:sol": "forge build --sizes",
+    "test:sol": "forge test --no-match-path 'test/fork/*' -vvv",
+    "test:fork": "forge test --match-path 'test/fork/*' -vvv",
+    "e2e": "node scripts/e2e-anvil.mjs local",
+    "e2e:fork": "node scripts/e2e-anvil.mjs fork",
+    "validate": "node scripts/run-validation.mjs",
+    "validate:full": "node scripts/run-validation.mjs --require-fork",
+    "preflight": "node scripts/preflight.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "create-operator-key": "node scripts/create-operator-key.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.13.2"
+  }
+}

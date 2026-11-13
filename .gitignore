@@ -1,0 +1,9 @@
+node_modules/
+out/
+cache/
+broadcast/
+data/
+*.log
+.env
+validation/gate-report.json
+validation/validation-log.md

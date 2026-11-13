@@ -1,0 +1,98 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {scanNetwork, sizesFor} from '../lib/scanner.mjs';
+import {DEFAULT_SETTINGS} from '../lib/settings.mjs';
+import {routeGasUnits, weiToStable} from '../lib/profit.mjs';
+import {FakeChain, testNet, AAVE, MORPHO} from './helpers/fake-chain.mjs';
+
+const settings = (o = {}) => ({...structuredClone(DEFAULT_SETTINGS), ...o});
+
+test('sizes derive from the configured loan size', () => {
+  assert.deepEqual(sizesFor(settings(), 6).map((s) => s.units), [500_000000n, 1000_000000n]);
+  assert.deepEqual(sizesFor(settings({loanSize: 250, sizeSteps: [1]}), 18).map((s) => s.usd), [250]);
+});
+
+test('scanner finds the dislocated route with exact on-chain-quote arithmetic', async () => {
+  const chain = new FakeChain();
+  const {state, candidates} = await scanNetwork({chain, net: testNet(), settings: settings()});
+  assert.equal(state.status, 'quotes-live');
+  const top = candidates[0];
+  assert.equal(top.buy, 'DexA V2');
+  assert.equal(top.sell, 'DexB V3 0.05%');
+  assert.equal(top.size, 1000);
+  assert.equal(top.provider.kind, 'AAVE_V3', 'Morpho has no liquidity in this market');
+  const mid = FakeChain.out(chain.pools.a, 1000_000000n, true);
+  const out = FakeChain.out(chain.pools.b, mid, false);
+  assert.equal(top.legs[0].quotedOut, mid.toString());
+  assert.equal(top.legs[1].quotedOut, out.toString());
+  const native = FakeChain.out(chain.pools.b, 10n ** 18n, false);
+  const gas = weiToStable(routeGasUnits('AAVE_V3', top.legs) * 10n ** 9n, native);
+  assert.equal(BigInt(top.netUnits), out - 1000_000000n - 500000n - gas);
+  assert.ok(top.netEstimate > 3, 'profitable after fee and gas');
+  assert.equal(top.executable, true);
+  assert.ok(candidates.some((c) => c.buy === 'DexB V3 0.05%' && c.netEstimate < 0), 'reverse direction is quoted and negative');
+});
+
+test('scanner prefers a zero-fee provider when it has liquidity', async () => {
+  const chain = new FakeChain();
+  chain.providers[MORPHO].available = 10n ** 15n;
+  const {candidates} = await scanNetwork({chain, net: testNet(), settings: settings()});
+  assert.equal(candidates[0].provider.kind, 'MORPHO_BLUE');
+  assert.equal(candidates[0].provider.fee, '0');
+});
+
+test('balanced market produces no positive candidate (no fake profit)', async () => {
+  const chain = new FakeChain();
+  chain.pools.b.rS = 20_000_000n * 10n ** 6n; // both pools at 2000
+  const {candidates} = await scanNetwork({chain, net: testNet(), settings: settings()});
+  assert.ok(candidates.length > 0);
+  assert.ok(candidates.every((c) => c.netEstimate < 0));
+});
+
+test('no provider liquidity => quote only, never executable', async () => {
+  const chain = new FakeChain();
+  chain.providers[AAVE].available = 0n;
+  const {candidates} = await scanNetwork({chain, net: testNet(), settings: settings()});
+  assert.ok(candidates.every((c) => !c.executable && c.blockers.some((b) => /no flash provider/.test(b))));
+});
+
+test('venue without fork validation is never executable', async () => {
+  const net = testNet();
+  net.venues = net.venues.map((v) => (v.id === 'a' ? {...v, forkValidated: false} : v));
+  const {candidates} = await scanNetwork({chain: new FakeChain(), net, settings: settings()});
+  assert.ok(candidates.every((c) => !c.executable));
+});
+
+test('RPC outage and wrong chain are reported, not hidden', async () => {
+  const down = new FakeChain();
+  down.down = true;
+  const a = await scanNetwork({chain: down, net: testNet(), settings: settings()});
+  assert.equal(a.state.status, 'unavailable');
+  assert.match(a.state.error, /RPC down/);
+  assert.equal(a.candidates.length, 0);
+  const b = await scanNetwork({chain: new FakeChain({chainId: 1}), net: testNet(), settings: settings()});
+  assert.match(b.state.error, /does not match/);
+});
+
+test('gas price above ceiling stops the scan for that network', async () => {
+  const chain = new FakeChain();
+  chain.gas.gasPrice = 50n * 10n ** 9n;
+  const {state, candidates} = await scanNetwork({chain, net: testNet(), settings: settings({maxGasGwei: 5})});
+  assert.match(state.error, /above ceiling/);
+  assert.equal(candidates.length, 0);
+});
+
+test('OP-stack networks include the L1 data fee in the gas estimate', async () => {
+  const a = await scanNetwork({chain: new FakeChain(), net: testNet(), settings: settings()});
+  const b = await scanNetwork({chain: new FakeChain(), net: testNet({l1Fee: 'op-stack'}), settings: settings()});
+  assert.ok(BigInt(b.candidates[0].gasStableUnits) > BigInt(a.candidates[0].gasStableUnits));
+});
+
+test('provider selection is restricted to gate-eligible lenders when available', async () => {
+  const chain = new FakeChain();
+  chain.providers[MORPHO].available = 10n ** 15n;
+  const {candidates} = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: ['AAVE_V3']});
+  assert.equal(candidates[0].provider.kind, 'AAVE_V3', 'Morpho is cheaper but not validated');
+  const fallback = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: ['EULER_V2']});
+  assert.equal(fallback.candidates[0].provider.kind, 'MORPHO_BLUE', 'no eligible lender configured: show cheapest (engine will block)');
+});

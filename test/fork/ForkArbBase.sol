@@ -187,7 +187,7 @@ abstract contract ForkArbBase is TestBase {
 
     function _aaveFee() internal view returns (uint256) {
         uint256 bps = IAavePoolF(n.aavePool).FLASHLOAN_PREMIUM_TOTAL();
-        return (loan * bps + 5000) / 10000; // WadRayMath.percentMul (half-up)
+        return (loan * bps + 9999) / 10000; // conservative ceiling; observed current Aave V3 premium rounding
     }
 
     function _aaveHolder() internal view returns (address) {

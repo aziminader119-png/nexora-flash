@@ -128,7 +128,14 @@ async function common({provider, net, exe, owner, operator, treasury, stable, se
   assert.equal((await exC.attempt(cands[0], net)).status, 'pending');
   const stuck = exC.journal.pending(net.id)[0];
   const tBefore = await bal();
-  await exC.reconcile(net);
+  // Fork RPCs can briefly fail when querying a pending receipt. Retry recovery
+  // but never mine the original transaction unless a replacement is actually
+  // journaled; otherwise this test could mistake a failed cancellation for success.
+  for (let i = 0; i < 8 && !exC.journal.events.some((e) => e.status === 'cancel_submitted'); i++) {
+    await exC.reconcile(net);
+    if (!exC.journal.events.some((e) => e.status === 'cancel_submitted')) await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.ok(exC.journal.events.some((e) => e.status === 'cancel_submitted'), 'cancellation replacement must be submitted before mining');
   await provider.send('evm_mine', []);
   assert.deepEqual(await exC.reconcile(net), {pending: 0});
   assert.equal(await provider.getTransactionReceipt(stuck.hashes[0]), null, 'original never mined');

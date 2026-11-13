@@ -73,7 +73,8 @@ async function cycle() {
     if (settings.paused) { log('info', 'Paused: scanning and execution suspended'); return; }
     const enabled = nets.filter((n) => settings.enabledChains.includes(n.id));
     // Prefer lenders whose fork round-trip passed for this network, so candidates are executable under the gate.
-    const eligible = (net) => (gateReport ? net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])) : null);
+    // No passing or fresh gate report => no validated lender, even for quoted routes.
+    const eligible = (net) => (globalGateBlockers(gateReport).length ? [] : net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])));
     const results = await Promise.all(enabled.map((net) => scanNetwork({chain: chainFor(net), net, settings, preferKinds: eligible(net)})));
     const next = [];
     for (const [i, r] of results.entries()) {

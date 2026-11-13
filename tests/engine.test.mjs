@@ -231,12 +231,31 @@ test('on-chain revert is recorded; circuit breaker auto-pauses after N failures'
   assert.match(after.reason, /paused|circuit breaker/);
 });
 
-test('definitive broadcast error is not left pending', async () => {
+test('uncertain broadcast error retains pending nonce and prevents another signed trade', async () => {
   const r = rig();
   r.chain.broadcastError = 'nonce too low';
   const res = await r.ex.attempt(await r.scan(), r.net);
   assert.equal(res.status, 'broadcast_error');
-  assert.equal(r.journal.pending().length, 0);
+  assert.equal(r.journal.pending().length, 1, 'RPC error does not prove a broadcast was rejected');
+  assert.equal(r.journal.pending()[0].nonce, 0);
+  assert.ok(!r.journal.events.some((e) => e.status === 'dropped'));
+
+  const distinctCandidate = await r.scan();
+  distinctCandidate.id += '-next-block';
+  const second = await r.ex.attempt(distinctCandidate, r.net);
+  assert.equal(second.status, 'blocked');
+  assert.match(second.reason, /still pending/);
+  assert.equal(r.chain.broadcasts.length, 0, 'never broadcast a new transaction while first nonce is unresolved');
+  // When on-chain pending nonce is actually consumed, reconciliation can resolve it.
+  r.chain.nonceLatest = 1;
+  assert.deepEqual(await r.ex.reconcile(r.net), {pending: 0});
+});
+
+test('ambiguous network timeout also keeps the transaction journaled', async () => {
+  const r = rig();
+  r.chain.broadcastError = 'RPC timeout';
+  assert.equal((await r.ex.attempt(await r.scan(), r.net)).status, 'broadcast_error');
+  assert.equal(r.journal.pending(r.net.id).length, 1);
 });
 
 test('emergency stop: local pause + on-chain pause(); replaces a stuck trade', async () => {

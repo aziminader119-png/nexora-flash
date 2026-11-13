@@ -24,7 +24,7 @@ apt-get install -y --no-install-recommends ca-certificates curl xz-utils openssl
 echo "==> Node.js 22 LTS (official tarball, SHA-256 verified)"
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then
-  M=$(node -p 'process.versions.node.split(".")[0]'); [[ "$M" -ge 20 ]] && NEED_NODE=0
+  M=$(node -p 'process.versions.node.split(".")[0]'); [[ "$M" -ge 22 ]] && NEED_NODE=0
 fi
 if [[ $NEED_NODE -eq 1 ]]; then
   ARCH=$(dpkg --print-architecture); case "$ARCH" in amd64) NA=x64 ;; arm64) NA=arm64 ;; *) echo "unsupported arch $ARCH"; exit 1 ;; esac
@@ -36,6 +36,8 @@ if [[ $NEED_NODE -eq 1 ]]; then
   (cd "$TMP" && grep " $TARBALL\$" SHASUMS256.txt | sha256sum -c -)
   tar -xJf "$TMP/$TARBALL" -C /usr/local --strip-components=1
 fi
+NODE_BIN=$(readlink -f "$(command -v node)")
+[[ -x "$NODE_BIN" ]] || { echo "Node.js executable not found" >&2; exit 1; }
 node -v; npm -v
 
 if [[ $WITH_FOUNDRY -eq 1 ]]; then
@@ -71,7 +73,7 @@ if [[ ! -f "$ETC/nexora.env" ]]; then
   TOKEN=$(openssl rand -hex 32)
   sed -e "s/^ADMIN_TOKEN=.*/ADMIN_TOKEN=${TOKEN}/" -e "s#^DATA_DIR=.*#DATA_DIR=${DATA}#" -e "s#^GATE_REPORT=.*#GATE_REPORT=${APP}/validation/gate-report.json#" "$SRC/.env.example" > "$ETC/nexora.env"
   chown root:nexora "$ETC/nexora.env"; chmod 0640 "$ETC/nexora.env"
-  echo "Dashboard admin token (also in $ETC/nexora.env): $TOKEN"
+  echo "Admin token generated in $ETC/nexora.env (kept private; not printed)."
 fi
 
 echo "==> systemd unit"
@@ -90,7 +92,7 @@ Group=nexora
 WorkingDirectory=$APP
 EnvironmentFile=$ETC/nexora.env
 Environment=NODE_ENV=production
-ExecStart=/usr/local/bin/node $APP/server.js
+ExecStart=$NODE_BIN $APP/server.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=45

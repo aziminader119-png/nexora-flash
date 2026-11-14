@@ -5,7 +5,7 @@ import {TestBase} from "./utils/TestBase.sol";
 import {NexoraFlashExecutor} from "../contracts/NexoraFlashExecutor.sol";
 import {
     MockToken, MockAavePool, MockBalancerVault, MockMorpho, MockEulerVault, MockRouter, MockRouter02,
-    ReentrantRouter, RogueLender, TamperingPool
+    ReentrantRouter, RogueLender, TamperingPool, MockFeeToken
 } from "../contracts/mocks/Mocks.sol";
 
 /// Local-EVM tests: successful and reverted atomic flash-loan arbitrage for every provider type and venue type.
@@ -411,6 +411,64 @@ contract NexoraFlashExecutorTest is TestBase {
         usd.mint(address(exe), 7e6);
         exe.rescue(address(usd), 7e6);
         assertEq(usd.balanceOf(address(this)), 7e6, "rescued to owner");
+    }
+
+
+    // ------------------------------------------------------------ audit negative tests
+    function test_Audit_FeeOnTransferLoanAssetReverts() public {
+        MockFeeToken fot = new MockFeeToken();
+        MockAavePool pool = new MockAavePool();
+        fot.mint(address(pool), 1_000_000e18);
+        exe.setProvider(address(pool), 1);
+        exe.setToken(address(fot), true);
+        exe.setMaxLoan(address(fot), 1000e18);
+        cheap.setRate(address(fot), address(weth), 1, 2000);
+        rich.setRate(address(weth), address(fot), 2100, 1);
+        weth.mint(address(cheap), 1e18);
+        fot.mint(address(rich), 1_000_000e18);
+        NexoraFlashExecutor.Plan memory p = _plan(address(pool), 1);
+        p.asset = address(fot);
+        p.amount = 1000e18;
+        p.maxFee = 10e18;
+        p.legs[0] = _leg(address(cheap), 0, address(fot), address(weth), 0, 0);
+        p.legs[1] = _leg(address(rich), 0, address(weth), address(fot), 0, 0);
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("loan not received"));
+        exe.start(p);
+    }
+
+    function test_Audit_FeeOnTransferIntermediateReverts() public {
+        MockFeeToken fot = new MockFeeToken();
+        exe.setToken(address(fot), true);
+        cheap.setRate(address(usd), address(fot), 1e12, 1);
+        rich.setRate(address(fot), address(usd), 1010, 1e12);
+        fot.mint(address(cheap), 1_000_000e18);
+        NexoraFlashExecutor.Plan memory p = _plan(address(aave), 1e6);
+        p.legs[0] = _leg(address(cheap), 0, address(usd), address(fot), 0, 1000e18);
+        p.legs[1] = _leg(address(rich), 0, address(fot), address(usd), 0, 0);
+        uint256 poolBefore = usd.balanceOf(address(aave));
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("slippage"));
+        exe.start(p);
+        assertEq(usd.balanceOf(address(aave)), poolBefore, "lender untouched");
+    }
+
+    function test_Audit_OperatorCannotRedirectProfitOrDrainBalances() public {
+        usd.mint(address(exe), 50e6);
+        vm.startPrank(OPERATOR);
+        vm.expectRevert(bytes("owner only"));
+        exe.setProfitReceiver(OPERATOR);
+        vm.expectRevert(bytes("owner only"));
+        exe.rescue(address(usd), 50e6);
+        vm.expectRevert(bytes("owner only"));
+        exe.rescueNative(0);
+        vm.expectRevert(bytes("owner only"));
+        exe.unpause();
+        (uint256 profit,) = exe.start(_plan(address(aave), 1e6));
+        vm.stopPrank();
+        assertEq(usd.balanceOf(TREASURY), profit, "profit only to owner-set receiver");
+        assertEq(usd.balanceOf(OPERATOR), 0, "operator receives nothing");
+        assertEq(usd.balanceOf(address(exe)), 50e6, "stray balance untouched");
     }
 
     // ------------------------------------------------------------ fuzz: accounting invariant

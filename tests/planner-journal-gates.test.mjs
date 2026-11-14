@@ -47,6 +47,9 @@ test('plan: owner-approved long routes serialize up to 10 swaps with per-leg flo
     assert.equal(plan.legs.at(-1).tokenOut, A);
     assert.ok(plan.legs.every((x) => x.minOut > 0n));
     assert.ok(plan.legs.at(-1).minOut < BigInt(legs.at(-1).quotedOut));
+    // Total slippage for long paths is bounded by slippageBps, not 10x its value.
+    const finalQuote = BigInt(legs.at(-1).quotedOut);
+    assert.ok(plan.legs.at(-1).minOut >= finalQuote * 9970n / 10000n - 10n, 'total 30 bps path budget not multiplied by hop count');
     assert.throws(() => buildPlan(cand({legs: [...legs, {...legs[0]}]}), options), /Invalid leg count|Not a round trip/);
   }
   assert.throws(() => validateFreshCandidate(cand({mode: 'MULTIHOP_OBSERVE_ONLY', executable: true}), {currentBlock: 100, now: 1_700_000_000_000, maxQuoteAgeMs: 6000}), /Route not executable/);

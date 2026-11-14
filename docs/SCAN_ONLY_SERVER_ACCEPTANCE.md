@@ -11,6 +11,19 @@ This checklist is for an isolated pilot on a new server. It does **not** approve
 - Do not copy any owner private keys or operator signer into the scan-only instance.
 - Review the RPC URLs and any multi-hop token/venue catalog for accuracy and privacy.
 
+## Host hardening (before install)
+
+```bash
+sudo apt-get update && sudo apt-get -y upgrade
+sudo apt-get install -y unattended-upgrades ufw
+sudo ufw default deny incoming && sudo ufw default allow outgoing
+# Confirm the actual SSH port before enabling UFW; keep console access for recovery.
+sudo ufw allow OpenSSH
+sudo ufw --force enable
+```
+
+Configure SSH keys and disable password authentication only after confirming key-based login works. Do not expose port 3080.
+
 ## Install
 
 ```bash
@@ -49,6 +62,9 @@ Verify the status reports `liveExecutionEnabled: false`, `longRouteExecutionOptI
 
 ```bash
 sudo systemctl stop nexora
+cd nexora-flash && git fetch origin && git checkout <PREVIOUS_REVIEWED_COMMIT_SHA>
+sudo bash install-ubuntu.sh
+curl --fail http://127.0.0.1:3080/api/status
 ```
 
 Keep the journal and logs for diagnostics. Roll back only to a reviewed commit; do not delete or reinterpret outstanding nonce state if any execution history exists. Change environment configuration only with an operator-controlled approval.

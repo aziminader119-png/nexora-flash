@@ -17,6 +17,7 @@ import {refineLoanSizes} from './lib/route-refinement.mjs';
 import {routeDepthBudgets} from './lib/route-budget.mjs';
 import {projectCurrentScan} from './lib/scan-reliability.mjs';
 import {shadowVerify} from './lib/shadow-verifier.mjs';
+import {ShadowMetrics} from './lib/shadow-metrics.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -80,6 +81,7 @@ const states = new Map();
 const marketDiscoveryCache = new Map(); // Read-only, 60s TTL. Never feeds executor.
 const marketDiscoveryInflight = new Map(); // Throttle upstream traffic on concurrent requests.
 const shadowQuality = new Map(); // Latest diagnostic by chain, never execution candidates.
+const shadowMetrics = new ShadowMetrics(path.join(DATA_DIR,'shadow-metrics.jsonl'));
 const multiHopTurn = new Map(); // Rotate first-hop selection between scans (AUDIT M-A)
 let opportunities = [];
 let busy = false, lastScan = null, scans = 0;
@@ -241,6 +243,8 @@ async function cycle() {
               routeEdges:edges,maxCandidates:2,maxQuotes:16,
             });
             shadowQuality.set(net.id,{...shadow,at:new Date().toISOString()});
+            try {shadowMetrics.record(net.id,shadow);}
+            catch(e) {log('warning',net.name+' shadow metrics persistence: '+String(e.message||e).slice(0,100));}
             r.state.shadowVerification={
               status:shadow.status,scanned:shadow.scanned,quotes:shadow.quotes,
               aboveThreshold:shadow.candidates.filter(c=>c.status==='REQUOTE_ABOVE_THRESHOLD').length,
@@ -398,6 +402,9 @@ const server = http.createServer(async (req, res) => {
         return json(res,503,{mode:'DISCOVERY_ONLY',chain,
           error:'published market data unavailable',actionable:false});
       }
+    }
+    if (req.method === 'GET' && u.pathname === '/api/shadow/metrics') {
+      return json(res,200,shadowMetrics.summary());
     }
     if (req.method === 'GET' && u.pathname === '/api/shadow/quality') {
       return json(res,200,{mode:'SHADOW_REQUOTE_ONLY',executable:false,

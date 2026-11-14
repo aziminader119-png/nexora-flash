@@ -11,6 +11,7 @@ import {discoverMultiHopCycles} from './lib/multihop.mjs';
 import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
 import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
+import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -121,6 +122,8 @@ async function cycle() {
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
         r.state.multiHopTruncated = extra.truncated;
+        r.state.multiHopRootsExplored = extra.rootsExplored ?? 0;
+        r.state.multiHopRootsEligible = extra.rootsEligible ?? 0;
         // Diagnostics never authorize trades. All per-hop traces preserve token raw units.
         if (!LIVE) {
           for (const c of extra.candidates) c.diagnostics = {
@@ -237,6 +240,23 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, routeObservations.stats());
     if (req.method === 'GET' && u.pathname === '/api/multihop/history')
       return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/routes/ranked') {
+      // Read-only ranking of the SAME latest opportunities as the dashboard.
+      // It cannot add execution permissions or assert a profitable trade.
+      return json(res,200,rankObservedRoutes(opportunities,{
+        minProfitUSD:settings.minProfitUSD,maxImpactBps:300,limit:20}));
+    }
+    if (req.method === 'GET' && u.pathname === '/api/multihop/review') {
+      // The newest observations are ranked independently of the legacy top-100
+      // dashboard. Never turn a quote into a funded execution recommendation.
+      const query=Object.fromEntries(u.searchParams);
+      const source=routeObservations.cycles({...query,limit:'200',offset:'0'});
+      const cutoff=query.minimumProfitUSD==null?settings.minProfitUSD:Number(query.minimumProfitUSD);
+      const impact=query.maxImpactBps==null?300:Number(query.maxImpactBps);
+      const reviewed=reviewObservedRoutes(source.cycles,{minProfitUSD:cutoff,maxImpactBps:impact});
+      return json(res,200,{...reviewed,sourceTotal:source.total,considered:source.cycles.length,
+        sourceTruncated:source.total>source.cycles.length});
+    }
     if (req.method === 'GET' && u.pathname === '/api/multihop/sizes') {
       const result=routeObservations.cycles(Object.fromEntries(u.searchParams));
       return json(res, 200, {...result,cycles:undefined,sizeComparisons:compareRouteSizes(result.cycles)});

@@ -26,7 +26,7 @@ function rig(opts={}){
   quoteV2:async(router,amount,tokenIn,tokenOut,block)=>{
    requests.push({router,amount,block});
    if(tokenIn.toLowerCase()===B.toLowerCase() && tokenOut.toLowerCase()===A.toLowerCase())
-     return router===r2 ? amount*53n/100n : amount*50n/100n;
+     return router===r2 ? amount*53n/100n : 2_000_000_000n;
    return amount*2n;
   },
   ...opts,
@@ -65,7 +65,11 @@ test('route identities and quote errors reject rather than infer any profit',asy
  const fake={...candidate,legs:[{...candidate.legs[0],router:'0x'+'88'.repeat(20)},candidate.legs[1]]};
  const r=await shadowVerify({chain,net,settings,candidates:[fake],routeEdges});
  assert.equal(r.candidates[0].status,'UNKNOWN_POOL');
- const broken=rig({quoteV2:async()=>{throw Error('bad rpc')}});
+ const broken=rig();
+ broken.chain.quoteV2=async(router,...args)=>{
+  if(router===r1||router===r2)throw Error('bad rpc');
+  return 2_000_000_000n;
+ };
  const b=await shadowVerify({chain:broken.chain,net,settings,candidates:[candidate],routeEdges});
  assert.equal(b.candidates[0].status,'RPC_OR_QUOTE_ERROR');
  assert.equal(b.candidates[0].executable,false);

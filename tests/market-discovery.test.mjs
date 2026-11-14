@@ -70,3 +70,13 @@ test('per-seed market fetch is bounded for both supported chains',async()=>{
   assert.equal(r.length,Math.min(urls.length*250,1500));
  }
 });
+
+test('favors liquid active markets over source order when a seed has more than 250 pairs',async()=>{
+ const many=Array.from({length:300},(_,i)=>pool(i+1,1,{
+  volume:{h24:i===299?1_000_000:1},liquidity:{usd:i===299?5_000_000:50_000},
+ }));
+ const r=await fetchPublishedPairs('base',{fetchFn:async()=>({ok:true,json:async()=>many})});
+ assert.equal(r.length,1000);
+ assert.ok(r.some(x=>x.pairAddress===many[299].pairAddress),'last but most active pool must be included');
+ assert.ok(!r.some(x=>x.pairAddress===many[0].pairAddress),'lowest volume pool should be excluded');
+});

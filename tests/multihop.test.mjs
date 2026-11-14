@@ -284,3 +284,36 @@ test('a 3-hop scanner does not report a 4-hop path, or invent a partial cycle',a
   assert.equal(four.candidates.length,1);
   assert.equal(four.candidates[0].executable,false);
 });
+
+test('shared read-only quote cache avoids repeated same-block work across route-depth scans',async()=>{
+ const o=setup(5);
+ const cache=new Map();
+ const a=await run(o,{minDepth:3,maxDepth:3,maxQuotes:30,quoteCache:cache});
+ const calls=o.chain.calls.length;
+ const b=await run(o,{minDepth:5,maxDepth:5,maxQuotes:30,quoteCache:cache});
+ assert.equal(a.candidates.length,0);
+ assert.equal(b.candidates.length,1);
+ assert.ok(b.cacheHits>=3,'shared path prefixes reused from 3-hop scan');
+ assert.ok(o.chain.calls.length-calls<5);
+ assert.ok(o.chain.calls.every(q=>q.block===4321));
+ assert.equal(b.candidates[0].executable,false);
+});
+test('quote cache keys include block and exact amount, avoiding stale reuse',async()=>{
+ const o=setup(4);
+ const cache=new Map();
+ await run(o,{minDepth:4,maxDepth:4,maxQuotes:20,quoteCache:cache,block:100});
+ const n=o.chain.calls.length;
+ const second=await run(o,{minDepth:4,maxDepth:4,maxQuotes:20,quoteCache:cache,block:101});
+ assert.equal(second.cacheHits,0);
+ assert.equal(o.chain.calls.length,n+4);
+ assert.ok(o.chain.calls.slice(n).every(c=>c.block===101));
+});
+test('funded candidate path never reads externally provided quote cache',async()=>{
+ const o=setup(5);
+ const cache=new Map();
+ await run(o,{minDepth:5,maxDepth:5,maxQuotes:20,quoteCache:cache});
+ const prev=o.chain.calls.length;
+ const result=await run(o,{minDepth:5,maxDepth:5,maxQuotes:20,quoteCache:cache,allowExecution:true});
+ assert.equal(result.cacheHits,0);
+ assert.equal(o.chain.calls.length,prev+5);
+});

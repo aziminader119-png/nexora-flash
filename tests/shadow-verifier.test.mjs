@@ -12,7 +12,7 @@ const routeEdges=[
 ];
 const candidate={
  id:'a',chainId:net.id,block:100,asset:A,amount:'100000000',size:100,
- netEstimate:6,provider:{kind:'AAVE_V3',fee:'50000'},
+ netEstimate:6,provider:{kind:'AAVE_V3',address:net.providers[0].address,fee:'50000'},
  legs:[{pool:'one',router:r1,fee:0,type:'v2',tokenIn:A,tokenOut:B},
  {pool:'two',router:r2,fee:0,type:'v2',tokenIn:B,tokenOut:A}],
 };
@@ -23,6 +23,7 @@ function rig(opts={}){
   chainId:async()=>net.id,
   blockNumber:async()=>101,
   feeData:async()=>({gasPrice:1_000_000n}),
+  providerInfo:async()=>({ok:true,available:1000000000n,feeModel:'aave-bps',feeParam:5}),
   quoteV2:async(router,amount,tokenIn,tokenOut,block)=>{
    requests.push({router,amount,block});
    if(tokenIn.toLowerCase()===B.toLowerCase() && tokenOut.toLowerCase()===A.toLowerCase())
@@ -87,4 +88,17 @@ test('service publishes separate shadow endpoint without modifying user interfac
  assert.match(s,/if \(!LIVE\) \{\s*try \{\s*const previous=previousScanCandidates/);
  assert.match(s,/if \(LIVE && settings\.autoExecute\)/);
  assert.doesNotMatch(s,/shadowQuality\.get\(.*?executor\.attempt/);
+});
+
+test('stale or unavailable flash-loan liquidity cannot create a positive shadow result',async()=>{
+ const {chain}=rig({providerInfo:async()=>({ok:true,available:0n,feeModel:'aave-bps',feeParam:5})});
+ const r=await shadowVerify({chain,net,settings,candidates:[candidate],routeEdges});
+ assert.equal(r.candidates[0].status,'LENDER_QUOTE_UNAVAILABLE');
+ assert.equal(r.candidates[0].executable,false);
+});
+test('current lender fee must be freshly verified rather than reusing old cycle fee',async()=>{
+ const {chain}=rig({providerInfo:async()=>({ok:true,available:1_000_000_000n,feeModel:'aave-bps',feeParam:1000})});
+ const r=await shadowVerify({chain,net,settings,candidates:[candidate],routeEdges});
+ assert.equal(r.candidates[0].status,'REQUOTE_BELOW_THRESHOLD');
+ assert.equal(r.candidates[0].feeModel,'CURRENT_BLOCK_ONCHAIN_LENDER_FEE');
 });

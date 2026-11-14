@@ -115,8 +115,9 @@ async function cycle() {
       r.state.multiHopTruncated = false;
       if (r.state.status !== 'quotes-live' || !routeCatalog.has(net.id)) return r;
       try {
-        const c = r.candidates[0];
-        if (!c) return r;
+        // A zero-result legacy USDC/WETH quote does not imply the catalog
+        // contains no profitable 2-10 hop cycle. Scanner state has its own
+        // block-pinned gas/native prices independent of legacy candidates.
         const edges = routeCatalog.get(net.id);
         // Explicit network consent + independently passing on-chain fork suite
         // + canonical venue identity; JSON claims alone are never authority.
@@ -128,14 +129,14 @@ async function cycle() {
         // execution gate: new short routes are ALWAYS observation-only.
         const quoteContext = {
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
-          block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
-          nativePrice: BigInt(c.nativePriceUnits),
+          block: r.state.block, gasPrice: BigInt(r.state.gasPriceWei),
+          nativePrice: BigInt(r.state.nativePriceUnits),
           infos: await Promise.all(net.providers.map(async (p) => {
             try { return {...await chainFor(net).providerInfo(p, net.stable.address, r.state.block), kind: p.kind, address: p.address}; }
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: LIVE ? eligible(net) : null,
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
-          at: c.at, rotation: (multiHopTurn.get(net.id) ?? 0),
+          at: r.state.quotedAt, rotation: (multiHopTurn.get(net.id) ?? 0),
         };
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
@@ -184,15 +185,22 @@ async function cycle() {
         // Only re-quote near-profitable observed paths at an intermediate
         // loan amount. No public price, trade simulation, or authorization.
         if (!LIVE) {
-          const refined = await refineLoanSizes({
-            ...quoteContext,candidates:extra.candidates,
-            maxQuotes:24,maxRoutes:2,nearMissUSD:1,
-          });
-          extra.candidates.push(...refined.candidates);
-          extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
-          extra.scannedQuotes+=refined.quotes;
-          r.state.refinementQuotes=refined.quotes;
-          r.state.refinementCycles=refined.refined;
+          try {
+            const refined = await refineLoanSizes({
+              ...quoteContext,candidates:extra.candidates,
+              maxQuotes:24,maxRoutes:2,nearMissUSD:1,
+            });
+            extra.candidates.push(...refined.candidates);
+            extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
+            extra.scannedQuotes+=refined.quotes;
+            r.state.refinementQuotes=refined.quotes;
+            r.state.refinementCycles=refined.refined;
+          } catch(e) {
+            // A bonus size refinement must NEVER discard previously valid
+            // catalog quotes from other paths.
+            r.state.refinementError=String(e.message||e).slice(0,160);
+            log('warning', net.name+' size refinement: '+r.state.refinementError);
+          }
         }
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;

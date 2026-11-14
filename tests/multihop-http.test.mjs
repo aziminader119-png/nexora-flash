@@ -52,6 +52,9 @@ test('read-only multihop endpoints start under SCAN_ONLY, reject malformed reque
   const cycles=await (await fetch(base+'/api/multihop/cycles?chainId=8453&limit=25')).json();
   assert.equal(cycles.total,0);
   assert.deepEqual(cycles.cycles,[]);
+  const sizes=await (await fetch(base+'/api/multihop/sizes?chainId=8453&limit=25')).json();
+  assert.equal(sizes.total,0);
+  assert.deepEqual(sizes.sizeComparisons,[]);
   const history=await (await fetch(base+'/api/multihop/history')).json();
   assert.equal(history.total,0);
   const invalid=await fetch(base+'/api/multihop/cycles?limit=100000');

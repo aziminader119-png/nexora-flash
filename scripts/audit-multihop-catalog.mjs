@@ -25,13 +25,26 @@ for(const net of nets){
  const chain=makeChain(net,env['RPC_'+net.id]||net.rpcDefault,{timeoutMs:9000});
  try {
   const block=await chain.blockNumber();
-  const audit=await verifyCatalogIdentities({chain,net,edges,block,
-   maxContracts:80,maxTokens:40,maxQuotes:12});
+  // Verify EVERY edge in bounded chunks, pinned to the same block.
+  // Quoting only the first 12 edges would silently omit large catalogs.
+  const CHUNK_SIZE=12;
+  const chunks=[];
+  for(let start=0;start<edges.length;start+=CHUNK_SIZE){
+    const check=await verifyCatalogIdentities({chain,net,
+      edges:edges.slice(start,start+CHUNK_SIZE),block,
+      maxContracts:80,maxTokens:40,maxQuotes:CHUNK_SIZE});
+    chunks.push({start,end:Math.min(edges.length,start+CHUNK_SIZE),
+      passed:check.passed,status:check.status,quoteChecks:check.quoteChecks,
+      failures:check.failures.map(f=>f.edge===undefined?f:{...f,edge:f.edge+start})});
+  }
+  const auditPassed=chunks.length>0&&chunks.every(x=>x.passed);
   const registryVenueMatch=catalogHasTrustedVenues(net,edges);
   const found={chainId:net.id,network:net.name,edgeCount:edges.length,
-   ...audit,registryVenueMatch,
-   passed:audit.passed&&registryVenueMatch,
-   status:!registryVenueMatch?'UNREVIEWED_VENUE':audit.status};
+    block,chunks,quoteChecks:chunks.reduce((n,c)=>n+c.quoteChecks,0),
+    registryVenueMatch,passed:auditPassed&&registryVenueMatch,
+    status:!registryVenueMatch?'UNREVIEWED_VENUE':auditPassed?
+       'QUOTE_PREFLIGHT_PASSED':'REJECTED',
+    failures:chunks.flatMap(c=>c.failures),executable:false};
   result.networks.push(found);
   if(found.passed)result.passed++;else result.failed++;
  }catch(e){

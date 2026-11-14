@@ -3,9 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {projectCurrentScan} from '../lib/scan-reliability.mjs';
 const networks=[{id:8453,name:'Base'},{id:42161,name:'Arbitrum'}];
+const addr=n=>'0x'+n.toString(16).padStart(40,'0');
+const asset=addr(1);
 const c=(chainId,block,netEstimate,hops=2)=>({
- chainId,block,netEstimate,size:100,hopCount:hops,
- legs:Array.from({length:hops},()=>({pool:'test'})),
+ chainId,block,netEstimate,size:100,hopCount:hops,asset,
+ legs:Array.from({length:hops},(_,i)=>({
+   pool:'p'+i,tokenIn:i===0?asset:addr(i+10),
+   tokenOut:i===hops-1?asset:addr(i+11),
+ })),
  executable:false
 });
 test('network failure cannot leak prior-cycle candidates or misrepresent scan complete',()=>{
@@ -61,4 +66,19 @@ test('failed-network scans supersede even read-only persisted route quotes',()=>
  const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
  assert.match(server,/r\.state\.status==='quotes-live'\?r\.candidates:\[\]/);
  assert.match(server,/routeObservations\.record\(net,failed,\[\]/);
+});
+
+test('reject nonclosed routes, discontinuous token swaps, and forged hop counts',()=>{
+ const badClose=c(8453,100,900);
+ badClose.legs[1].tokenOut=addr(400);
+ const discontinuous=c(8453,100,500);
+ discontinuous.legs[1].tokenIn=addr(401);
+ const spoofed=c(8453,100,700);
+ spoofed.hopCount=10;
+ const good=c(8453,100,3);
+ const r=projectCurrentScan([networks[0]],[{
+  state:{status:'quotes-live',chainId:8453,block:100},
+  candidates:[badClose,discontinuous,spoofed,good],
+ }]);
+ assert.deepEqual(r.candidates.map(x=>x.netEstimate),[3]);
 });

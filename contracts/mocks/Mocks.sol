@@ -210,3 +210,27 @@ contract TamperingPool {
         IAaveReceiver(receiver).executeOperation(asset, amount, 0, msg.sender, tampered);
     }
 }
+
+/** Fee-on-transfer token, burns 1% on transfers. For negative security tests only. */
+contract MockFeeToken {
+    string public name = "Fee Token";
+    string public symbol = "FOT";
+    uint8 public decimals = 18;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    function mint(address a, uint256 n) external { balanceOf[a] += n; }
+    function approve(address s, uint256 n) external returns (bool) { allowance[msg.sender][s] = n; return true; }
+    function _move(address from, address to, uint256 n) internal {
+        require(balanceOf[from] >= n, "balance");
+        balanceOf[from] -= n;
+        balanceOf[to] += n - n / 100;
+    }
+    function transfer(address to, uint256 n) external returns (bool) { _move(msg.sender, to, n); return true; }
+    function transferFrom(address from, address to, uint256 n) external returns (bool) {
+        require(allowance[from][msg.sender] >= n, "allowance");
+        allowance[from][msg.sender] -= n;
+        _move(from, to, n);
+        return true;
+    }
+}

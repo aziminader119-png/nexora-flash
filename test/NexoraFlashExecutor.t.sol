@@ -244,6 +244,36 @@ contract NexoraFlashExecutorTest is TestBase {
         }
     }
 
+    function test_LongCyclesSixThroughNineRepayAtomically() public {
+        // Exercise every intermediate route length, not just 5 and 10.
+        for (uint256 n = 6; n <= 9; n++) {
+            NexoraFlashExecutor.Plan memory p = _longPlan(n);
+            exe.setMaxRouteLegs(n);
+            exe.setLongRouteApproved(exe.longRouteHash(p), true);
+            uint256 lenderBefore = usd.balanceOf(address(aave));
+            uint256 treasuryBefore = usd.balanceOf(TREASURY);
+            (uint256 profit, uint256 fee) = _run(p);
+            assertEq(fee, 500_000, "flash loan fee");
+            assertEq(profit, 99_500_000, "multi-hop profit");
+            assertEq(usd.balanceOf(address(aave)), lenderBefore + fee, "lender fully repaid");
+            assertEq(usd.balanceOf(TREASURY), treasuryBefore + profit, "profit distributed");
+            for (uint256 i = 0; i < p.legs.length; i++) {
+                assertEq(MockToken(p.legs[i].tokenIn).allowance(address(exe), p.legs[i].router), 0, "router allowance cleared");
+            }
+        }
+    }
+
+    function test_LongCycleUnapprovedSameRoutersDifferentDirectionReverts() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(5);
+        exe.setMaxRouteLegs(5);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
+        // Even a token direction mutation changes the owner-approved route hash.
+        p.legs[1].tokenOut = p.legs[0].tokenIn;
+        vm.prank(OPERATOR);
+        vm.expectRevert();
+        exe.start(p);
+    }
+
     function test_LongCycleElevenLegsAndUnauthorizedLimitRevert() public {
         NexoraFlashExecutor.Plan memory p = _longPlan(11);
         vm.prank(OPERATOR);

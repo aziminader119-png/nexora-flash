@@ -10,7 +10,7 @@ Status: source changes in a branch; not installed to any server. No live orders.
 - Seed coverage: per-chain bounded public token-pair queries. One unavailable
   token seed cannot erase other observed results; `sourceCoverage.complete`
   explicitly reports completeness. Total outage returns HTTP 503, not zero
-  opportunities. Same-hour cache and request coalescing bound upstream calls.
+  opportunities. 60-second cache and request coalescing bound upstream calls.
 - Amount selection: `GET /api/routes/intelligence` compares observed
   2–10-hop candidates from the latest scan at *the same block* per exact
   pool+token-direction+fee route, selecting the largest **quoted net USD**

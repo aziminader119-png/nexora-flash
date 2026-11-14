@@ -65,3 +65,18 @@ test('best economic size can be unsafe while smaller complete size remains revie
  assert.equal(r.families[0].eligibleForForkReview,true);
  assert.equal(r.families[0].executable,false);
 });
+
+test('conflicting quotes at identical block and size are excluded rather than selecting a convenient winner',()=>{
+ const x=cand(100,9),y=cand(100,99);
+ const r=rankRouteFamilies([x,y]);
+ assert.equal(r.totalFamilies,0);
+ assert.equal(r.skipped.duplicate,1);
+ assert.equal(r.eligibleForForkReview,0);
+ assert.equal(x.executable,false);
+});
+test('conflicting large size cannot hide independently quoted smaller size',()=>{
+ const r=rankRouteFamilies([cand(100,9),cand(100,99),cand(50,3)]);
+ assert.equal(r.totalFamilies,1);
+ assert.equal(r.families[0].bestQuotedSizeUSD,50);
+ assert.equal(r.families[0].executable,false);
+});

@@ -159,19 +159,9 @@ systemctl --no-pager --full status nexora | head -20 || true
 [[ $HEALTHY -eq 1 ]] || { echo "ERROR: service did not become healthy; see journalctl -u nexora -n 100" >&2; exit 1; }
 MODE=$(curl -fsS "http://127.0.0.1:${PORT_CFG}/api/status" | jq -r .mode)
 echo "Service healthy; mode=${MODE}"
-if grep -qE '^LIVE_EXECUTION=false
-
-cat <<EOF
-
-NEXORA installed. LIVE_EXECUTION=false (scan-only) until you complete docs/OPERATIONS.md:
-  1. npm run validate:full   (on a host with forge/anvil + RPCs) -> validation/gate-report.json
-  2. deploy executor (scripts/deploy.mjs), set EXECUTOR_<chainId> in $ETC/nexora.env
-  3. create operator key, re-run this installer, fund operator with gas only
-  4. npm run preflight, then set LIVE_EXECUTION=true and choose live networks in the dashboard
-Dashboard (local only): ssh -L 3080:127.0.0.1:3080 USER@SERVER  ->  http://127.0.0.1:3080
-EOF
- "$ETC/nexora.env" && [[ "$MODE" != "SCAN_ONLY" ]]; then
-  echo "ERROR: LIVE_EXECUTION=false but mode=${MODE}" >&2; exit 1
+if grep -qE '^LIVE_EXECUTION=false$' "$ETC/nexora.env" && [[ "$MODE" != "SCAN_ONLY" ]]; then
+  echo "ERROR: LIVE_EXECUTION=false but service reports mode ${MODE}" >&2
+  exit 1
 fi
 
 cat <<EOF

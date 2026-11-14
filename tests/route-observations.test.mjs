@@ -69,3 +69,17 @@ test('legacy /api/status and new API routes coexist without changing UI or execu
  assert.match(source,/opportunities: opportunities\.slice\(0, 100\)/);
  assert.match(source,/if \(LIVE && settings\.autoExecute\)/);
 });
+
+test('72-hour rolling health aggregates summarize quote coverage and truncated scans',()=>{
+ const db=new RouteObservations();
+ db.record(net,state,[make(1,-4),make(2,5)],{minimumProfit:3});
+ db.record(net,{...state,multiHopQuotes:10,multiHopTruncated:false},[make(3,-7)],{minimumProfit:3});
+ const roll=db.stats().rolling72h.find(x=>x.chainId===8453);
+ assert.equal(roll.scans,2);
+ assert.equal(roll.quotes,90);
+ assert.equal(roll.cycles,3);
+ assert.equal(roll.profitableIndicativeQuotes,1);
+ assert.equal(roll.aboveMinProfitIndicativeQuotes,1);
+ assert.equal(roll.truncatedScans,1);
+ assert.equal(roll.errorScans,0);
+});

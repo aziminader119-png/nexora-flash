@@ -133,6 +133,13 @@ async function cycle() {
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
         const sharedQuoteCache = new Map(); // One exact-network/block cycle only
+        // Expand 2-hop discovery beyond the legacy stable/wrapped pair,
+        // but only along explicitly cataloged on-chain pools. It is NEVER
+        // promoted to a funded 2-hop opportunity.
+        const duo = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:2, maxDepth:2, maxQuotes:24,
+          allowExecution:false, quoteCache:sharedQuoteCache,
+        });
         const tri = await discoverMultiHopCycles({
           ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
           allowExecution:false, quoteCache:sharedQuoteCache,
@@ -145,20 +152,22 @@ async function cycle() {
           maxDepth:10, maxQuotes:80, allowExecution,
           quoteCache:allowExecution ? null : sharedQuoteCache});
         const extra = {
-          candidates:[...tri.candidates,...quad.candidates,...long.candidates]
+          candidates:[...duo.candidates,...tri.candidates,...quad.candidates,...long.candidates]
             .sort((a,b)=>b.netEstimate-a.netEstimate),
-          scannedQuotes:tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
-          truncated:tri.truncated||quad.truncated||long.truncated,
-          rootsExplored:tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
-          rootsEligible:Math.max(tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
+          scannedQuotes:duo.scannedQuotes+tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
+          truncated:duo.truncated||tri.truncated||quad.truncated||long.truncated,
+          rootsExplored:duo.rootsExplored+tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
+          rootsEligible:Math.max(duo.rootsEligible,tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
         };
-        r.state.shortCycleQuotes = tri.scannedQuotes+quad.scannedQuotes;
+        r.state.catalogTwoHopQuotes = duo.scannedQuotes;
+        r.state.catalogTwoHopCycles = duo.candidates.length;
+        r.state.shortCycleQuotes = duo.scannedQuotes+tri.scannedQuotes+quad.scannedQuotes;
         r.state.shortCycleCount = tri.candidates.length+quad.candidates.length;
         r.state.threeHopCycles = tri.candidates.length;
         r.state.fourHopCycles = quad.candidates.length;
         r.state.longCycleQuotes = long.scannedQuotes;
         r.state.longCycleCount = long.candidates.length;
-        r.state.quoteCacheHits = tri.cacheHits+quad.cacheHits+long.cacheHits;
+        r.state.quoteCacheHits = duo.cacheHits+tri.cacheHits+quad.cacheHits+long.cacheHits;
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;

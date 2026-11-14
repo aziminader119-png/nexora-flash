@@ -236,10 +236,10 @@ test('fair scanning samples multiple root branches in a single scan without exce
  o.settings.sizeSteps=[1];
  const r=await run(o,{maxQuotes:20,rotation:0});
  assert.equal(r.rootsEligible,6);
- assert.equal(r.rootsExplored,4);
- assert.equal(r.scannedQuotes,20);
- assert.equal(r.candidates.length,4);
- assert.equal(new Set(r.candidates.map(first=>first.legs[0].pool)).size,4);
+ assert.equal(r.rootsExplored,2);
+ assert.equal(r.scannedQuotes,10);
+ assert.equal(r.candidates.length,2);
+ assert.equal(new Set(r.candidates.map(first=>first.legs[0].pool)).size,2);
  assert.equal(r.truncated,true);
  assert.ok(r.candidates.every(c=>c.executable===false));
  assert.ok(o.chain.calls.every(call=>call.block===4321));
@@ -252,13 +252,13 @@ test('four loan sizes all get root coverage and first-hop rotation changes cover
  const second=await run(o,{maxQuotes:80,rotation:1});
  assert.deepEqual(new Set(first.candidates.map(c=>c.size)),new Set([50,100,250,500]));
  assert.deepEqual(new Set(second.candidates.map(c=>c.size)),new Set([50,100,250,500]));
- assert.equal(first.scannedQuotes,80);
- assert.equal(first.rootsExplored,16);
+ assert.equal(first.scannedQuotes,40);
+ assert.equal(first.rootsExplored,8);
  assert.equal(first.rootsEligible,5);
  const a=new Set(first.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
  const b=new Set(second.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
- assert.equal(a.size,4);
- assert.equal(b.size,4);
+ assert.equal(a.size,2);
+ assert.equal(b.size,2);
  assert.notDeepEqual(a,b);
  assert.ok([...first.candidates,...second.candidates].every(c=>c.mode==='MULTIHOP_OBSERVE_ONLY'&&!c.executable));
 });
@@ -321,4 +321,25 @@ test('funded candidate path never reads externally provided quote cache',async()
  const result=await run(o,{minDepth:5,maxDepth:5,maxQuotes:20,quoteCache:cache,allowExecution:true});
  assert.equal(result.cacheHits,0);
  assert.equal(o.chain.calls.length,prev+5);
+});
+
+test('ten-hop paths are reachable with several root branches and four loan sizes',async()=>{
+ const o=setup(10);
+ o.settings.sizeSteps=[0.05,0.1,0.25,0.5];
+ const base=[...o.net.routeEdges];
+ for(const offset of [10000,20000]){
+  const alt=base.map((e,i)=>({
+   ...e,pool:{...e.pool,key:'long'+offset+'-'+i,router:addr(offset+i)},
+   tokenIn:{...e.tokenIn,address:i===0?S:addr(offset+100+i-1)},
+   tokenOut:{...e.tokenOut,address:i===9?S:addr(offset+100+i)},
+  }));
+  o.net.routeEdges.push(...alt);
+ }
+ const r=await run(o,{maxQuotes:80,minDepth:5,maxDepth:10,rotation:0});
+ assert.equal(r.rootsEligible,3);
+ assert.equal(r.rootsExplored,8);
+ assert.equal(r.scannedQuotes,80);
+ assert.equal(r.candidates.length,8);
+ assert.deepEqual(new Set(r.candidates.map(c=>c.size)),new Set([50,100,250,500]));
+ assert.ok(r.candidates.every(c=>c.hopCount===10&&!c.executable));
 });

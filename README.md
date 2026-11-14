@@ -6,7 +6,7 @@ unattended behind a validation gate. A single-page dashboard has Opportunities, 
 
 > **Status: review candidate, NOT authorized for funded multi-hop trading.** Foundry compilation and local Solidity/Node
 > test jobs have passed in GitHub Actions for the 5–10 hop implementation. This is NOT proof of 5–10 hop execution
-> against real DEX liquidity on every target chain. The separate `test_multihop_roundTrip` network fork gate is not
+> against real DEX liquidity on every target chain. The separate `test_multihop_realVenues_roundTrip` network fork gate is not
 > present in the fork suite as of this review; therefore the long-route execution gate remains locked. A passing
 > `npm run validate:full`, validated on-chain bytecode, explicit cold-owner approvals, and independent security review
 > are required before any live deployment. The project defaults to `LIVE_EXECUTION=false` and
@@ -31,7 +31,7 @@ unattended behind a validation gate. A single-page dashboard has Opportunities, 
 
 - `lib/multihop.mjs` enumerates bounded, block-pinned quotes for closed, non-repeating cycles using an explicit chain-scoped catalog of directed token/pool edges supplied in `MULTIHOP_CATALOG_FILE`. It does not invent pools or prices; an empty catalog discovers zero multi-hop routes.
 - The executor contract permits at most 10 legs but keeps `maxRouteLegs=4` by default. A cold owner must explicitly raise the cap and approve the exact route hash; allow-lists, slippage floors, flash-fee ceiling, minimum profit, full atomic rollback, and callback authentication also apply.
-- The server requires a separate long-route opt-in, chain selector, trusted venue registry, and the named network-specific mainnet-fork test `test_multihop_roundTrip` in its validation gate. **Do not add a stub, fake, or mocked mainnet-fork pass to bypass this gate.** The current fork tests cover their existing round-trips, not complete 5–10 hop real-liquidity execution.
+- The server requires a separate long-route opt-in, chain selector, trusted venue registry, and the named network-specific mainnet-fork test `test_multihop_realVenues_roundTrip` in its validation gate. **Do not add a stub, fake, or mocked mainnet-fork pass to bypass this gate.** The current fork tests cover their existing round-trips, not complete 5–10 hop real-liquidity execution.
 - Tests for route lengths 5, 6, 7, 8, 9, 10 exist for the mock-contract and on-chain-quote scanner. Real-market profitability, current liquidity, priority inclusion, gas costs, and the deployment security posture remain unproven.
 - Safe audit commands: `npm test`, `forge build --sizes`, `forge test --no-match-path 'test/fork/*' -vvv`, `npm run validate:full`. A read-only route introspection utility is `node scripts/check-long-route.mjs <chainId> <executorAddress> <candidate.json>`.
 - Never set `LIVE_EXECUTION=true` or `MULTIHOP_EXECUTION_ENABLED=true` based on mock tests alone. Keep owner credentials and operator signing keys out of GitHub and review artifacts.

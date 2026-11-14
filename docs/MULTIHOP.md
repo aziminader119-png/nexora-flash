@@ -1,10 +1,10 @@
-# Cyclic multi-hop arbitrage observation
+# Cyclic 5–10 hop arbitrage: scanner and guarded executor
 
 NEXORA can now **observe** closed on-chain conversion routes with **5–10 swaps** in a single chain, for example:
 
 `USDC → WETH → DAI → cbBTC → USDT → USDC`
 
-Every edge is an explicit token pair and DEX router/quoter, evaluated against the real on-chain quote at one block. The scanner sums lender fees, a per-swap gas estimate and L2 data-gas estimate. Results are labeled `MULTIHOP_OBSERVE_ONLY`, and **executable is always false**. No wallet or transaction needed.
+Every edge is an explicit token pair and DEX router/quoter, quoted at one block. The scanner estimates lender fees, per-swap gas, and L2 data-gas. By default all long-cycle opportunities are `MULTIHOP_OBSERVE_ONLY`; no wallet is necessary. An independently guarded Solidity executor supports up to ten atomic swaps, but execution is disabled until all explicit gates pass.
 
 ## Activation (read-only)
 
@@ -41,6 +41,16 @@ Every edge is an explicit token pair and DEX router/quoter, evaluated against th
 - Quotes are capped at 80 requests **per network per scan** by default; 100 candidate cycles, 150 directed edges and 10 hops maximum. A cap hit is reported as `multiHopTruncated=true`.
 - Cycles cannot revisit an intermediate token or reuse the same pool.
 - Search runs only for explicitly catalogued networks. It never promotes a new token or router to the on-chain allowlist.
-- Quotes are *not* executable: the current `NexoraFlashExecutor` has `MAX_LEGS=4` and `buildPlan()` also limits legs to four. Both need carefully validated upgrades, new fork tests and a separate security review for any funded 5–10-hop execution.
+- The upgraded `NexoraFlashExecutor` supports a maximum of 10 legs, but `maxRouteLegs` defaults to **4**. Only the cold owner can raise that cap. This changes deployed bytecode: use a newly validated deployment with a matching codehash gate report.
+- The cold owner must separately approve the **route hash**: a chain-bound hash of the exact order of token addresses, router addresses, router kinds, and V3 fee tiers (excluding variable trade amount, deadline, and minimum outputs). Approvals can be revoked through the owner-only contract method.
+- Long-cycle paths reject repeated intermediate tokens and reused pools; the off-chain engine enforces on-chain token/router allowlists, owner route approval, quote freshness, gas budget, flash fee, minimum net profit, actual `eth_estimateGas`, and two final `eth_call` simulations.
+- The environment opt-ins `MULTIHOP_EXECUTION_ENABLED=false` and `MULTIHOP_EXECUTION_CHAINS=` both default OFF/empty. For any candidate to be considered executable, a fresh validation gate, the passing network `test_multihop_roundTrip` and exact matching to trusted network routers/fee tiers are also required.
+- **The fork's five/ten-hop test uses a REAL Aave lender but MOCK intermediate DEX venues** to verify atomic borrowing/repayment. This is not proof of live profitability or liquidity for a natural multi-token route. A route-specific fork with real production venues plus independent security review remains required before authorizing funded execution.
+- The operator hot key must not be the owner wallet. Never enable funded execution solely on the basis of passing developer tests.
 - More swaps imply more gas, more slippage and more stale-quote exposure. A quoted positive net is not executable profit; the route would need two simulations of the final calldata and exact gas estimates before any authorized execution.
 - The catalog should contain real **connected** token paths with verified liquidity and token decimals. Avoid fee-on-transfer and rebasing tokens. Creating a catalog does not make it safe for execution.
+
+
+## Deployment and security acceptance
+
+Before any production long-route trading, independently validate the exact token contracts and real production DEX pools on a recent fork, audit contract and engine changes, verify receipt/reorg/replacement handling, and approve a limited per-chain rollout with a cold-owner route hash. Verify gas and L2 data fees, time-to-live, slippage, expected failure gas, and a small funded pilot only after explicit approval. `LIVE_EXECUTION=false` must remain until that later approval. Current tests are developer tests, not an independent third-party audit.

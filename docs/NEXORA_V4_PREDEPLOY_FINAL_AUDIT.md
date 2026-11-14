@@ -44,10 +44,10 @@ grep -x 'LIVE_EXECUTION=false' /etc/nexora/nexora.env
 grep -x 'MULTIHOP_EXECUTION_ENABLED=false' /etc/nexora/nexora.env
 
 # After installing the exact reviewed ZIP:
-node scripts/audit-multihop-catalog.mjs
+node --env-file=/etc/nexora/nexora.env scripts/audit-multihop-catalog.mjs
 # Takes JSON array of on-chain candidate objects from the existing status API.
 curl -fsS http://127.0.0.1:3080/api/status | jq '.opportunities' > validation/latest-opportunities.json
-node scripts/audit-atomic-opportunities.mjs --candidates validation/latest-opportunities.json
+node --env-file=/etc/nexora/nexora.env scripts/audit-atomic-opportunities.mjs --candidates validation/latest-opportunities.json
 
 # 72-hour soak acceptance, using localhost-only GET endpoints.
 node scripts/soak-scan-only.mjs --hours 72 --interval 30

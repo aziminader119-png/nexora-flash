@@ -27,9 +27,11 @@ for(const net of nets){
   const block=await chain.blockNumber();
   const audit=await verifyCatalogIdentities({chain,net,edges,block,
    maxContracts:80,maxTokens:40,maxQuotes:12});
+  const registryVenueMatch=catalogHasTrustedVenues(net,edges);
   const found={chainId:net.id,network:net.name,edgeCount:edges.length,
-   registryVenueMatch:catalogHasTrustedVenues(net,edges),
-   ...audit};
+   ...audit,registryVenueMatch,
+   passed:audit.passed&&registryVenueMatch,
+   status:!registryVenueMatch?'UNREVIEWED_VENUE':audit.status};
   result.networks.push(found);
   if(found.passed)result.passed++;else result.failed++;
  }catch(e){

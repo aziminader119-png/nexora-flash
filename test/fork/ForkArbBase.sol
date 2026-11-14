@@ -284,6 +284,7 @@ abstract contract ForkArbBase is TestBase {
             previous = next;
         }
         exe.setMaxRouteLegs(hops);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
         uint256 receiverBefore = IERC20F(n.stable).balanceOf(TREASURY);
         vm.prank(OPERATOR);
         (uint256 profit, uint256 paidFee) = exe.start(p);

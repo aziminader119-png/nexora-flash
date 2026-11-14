@@ -83,3 +83,22 @@ test('AUDIT M-1: local dashboard rejects DNS rebinding hosts', () => {
   assert.equal(hostAllowed('nexora.internal:3080', {DASHBOARD_HOSTS: 'nexora.internal'}), true);
   assert.match(read('server.js'), /if \(!hostAllowed\(req\.headers\.host\)\)/);
 });
+
+import {MULTIHOP_FORK_GATE_TEST} from '../lib/networks.mjs';
+test('AUDIT H-1: mock-venue fork tests are not accepted as long-route execution gates', () => {
+  const files = ['test/fork/ForkArbBase.sol', 'test/fork/ForkNetworks.t.sol'];
+  for (const file of files) {
+    const source = read(file);
+    const pos = source.indexOf(`function ${MULTIHOP_FORK_GATE_TEST}(`);
+    if (pos < 0) continue;
+    let depth = 0, start = source.indexOf('{', pos), end = start;
+    for (; end < source.length; end++) {
+      if (source[end] === '{') depth++;
+      else if (source[end] === '}' && --depth === 0) break;
+    }
+    const body = source.slice(pos, end + 1);
+    assert.doesNotMatch(body, /Mock|_longRouteRoundTrip|new [A-Z]\w*Router/, `${file}: real-venue gate cannot use mocks`);
+  }
+  assert.doesNotMatch(read('test/fork/ForkArbBase.sol'), /function test_multihop_roundTrip\(/);
+  for (const file of ['lib/engine.mjs','server.js']) assert.match(read(file), /MULTIHOP_FORK_GATE_TEST/);
+});

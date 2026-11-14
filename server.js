@@ -13,6 +13,7 @@ import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
+import {refineLoanSizes} from './lib/route-refinement.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -168,6 +169,19 @@ async function cycle() {
         r.state.longCycleQuotes = long.scannedQuotes;
         r.state.longCycleCount = long.candidates.length;
         r.state.quoteCacheHits = duo.cacheHits+tri.cacheHits+quad.cacheHits+long.cacheHits;
+        // Only re-quote near-profitable observed paths at an intermediate
+        // loan amount. No public price, trade simulation, or authorization.
+        if (!LIVE) {
+          const refined = await refineLoanSizes({
+            ...quoteContext,candidates:extra.candidates,
+            maxQuotes:24,maxRoutes:2,nearMissUSD:1,
+          });
+          extra.candidates.push(...refined.candidates);
+          extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
+          extra.scannedQuotes+=refined.quotes;
+          r.state.refinementQuotes=refined.quotes;
+          r.state.refinementCycles=refined.refined;
+        }
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;

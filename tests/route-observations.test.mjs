@@ -112,3 +112,13 @@ test('short 3-4 hop cycles remain in dedicated observations without affecting lo
  assert.equal(db.cycles({minHops:'5',maxHops:'10'}).total,1);
  assert.equal(db.stats().networks[0].cycles,3);
 });
+
+test('server runs 3 and 4 hop scanners in read-only mode with independent budgets',()=>{
+ const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.match(source,/minDepth:3, maxDepth:3, maxQuotes:24,\s*allowExecution:false/);
+ assert.match(source,/minDepth:4, maxDepth:4, maxQuotes:24,\s*allowExecution:false/);
+ assert.match(source,/minDepth:5,\s*maxDepth:10, maxQuotes:80, allowExecution/);
+ assert.match(source,/r\.state\.threeHopCycles = tri\.candidates\.length/);
+ assert.match(source,/r\.state\.fourHopCycles = quad\.candidates\.length/);
+ assert.match(source,/if \(LIVE && settings\.autoExecute\)/);
+});

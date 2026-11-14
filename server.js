@@ -132,16 +132,18 @@ async function cycle() {
         };
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
+        const sharedQuoteCache = new Map(); // One exact-network/block cycle only
         const tri = await discoverMultiHopCycles({
           ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
-          allowExecution:false,
+          allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const quad = await discoverMultiHopCycles({
           ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:24,
-          allowExecution:false,
+          allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const long = await discoverMultiHopCycles({...quoteContext, minDepth:5,
-          maxDepth:10, maxQuotes:80, allowExecution});
+          maxDepth:10, maxQuotes:80, allowExecution,
+          quoteCache:allowExecution ? null : sharedQuoteCache});
         const extra = {
           candidates:[...tri.candidates,...quad.candidates,...long.candidates]
             .sort((a,b)=>b.netEstimate-a.netEstimate),
@@ -156,6 +158,7 @@ async function cycle() {
         r.state.fourHopCycles = quad.candidates.length;
         r.state.longCycleQuotes = long.scannedQuotes;
         r.state.longCycleCount = long.candidates.length;
+        r.state.quoteCacheHits = tri.cacheHits+quad.cacheHits+long.cacheHits;
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;

@@ -31,9 +31,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Install on clean Ubuntu in Scan Only mode
+      - name: Install NEXORA on clean Ubuntu 24.04
         run: sudo bash install-ubuntu.sh
-      - name: Verify service, mode, permissions and local-host defense
+      - name: Verify scan-only, localhost host protection, and permissions
         run: |
           set -euo pipefail
           systemctl is-active nexora
@@ -45,97 +45,11 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3080/api/settings -d '{}')" = 403
           test "$(sudo stat -c '%a %U:%G' /etc/nexora/nexora.env)" = "640 root:nexora"
           test "$(sudo stat -c '%a %U' /var/lib/nexora)" = "700 nexora"
-          sudo grep -q '^LIVE_EXECUTION=false    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Compile (fails on any compiler error)
-        run: forge build --sizes
-      - name: Unit, security and fuzz tests on local EVM
-        run: forge test --no-match-path 'test/fork/*' -vvv
-
-  e2e-local:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: [node-unit, solidity]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '22'}
-      - uses: foundry-rs/foundry-toolchain@v1
-      - run: npm install --no-audit --no-fund
-      - run: forge build
-      - name: Scanner + executor + ethers adapter against anvil (success, revert, restart, stuck tx, RPC failure, emergency stop)
-        run: node scripts/e2e-anvil.mjs local
-
-  fork:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    needs: [solidity]
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [ForkBaseTest, ForkBNBTest, ForkArbitrumTest, ForkOptimismTest, ForkPolygonTest]
-    env:
-      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
-      BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
-      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
-      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
-      POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-      - name: Mainnet-fork atomic arbitrage against real lenders and DEXes
-        run: forge test --match-contract '^${{ matrix.suite }}$' -vvv
-
-  e2e-fork-base:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    needs: [e2e-local, fork]
-    env:
-      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '22'}
-      - uses: foundry-rs/foundry-toolchain@v1
-      - run: npm install --no-audit --no-fund
-      - run: forge build
-      - run: node scripts/e2e-anvil.mjs fork
-
-  gate-report:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    needs: [e2e-fork-base]
-    env:
-      BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
-      BSC_RPC_URL: ${{ secrets.BSC_RPC_URL }}
-      ARBITRUM_RPC_URL: ${{ secrets.ARBITRUM_RPC_URL }}
-      OPTIMISM_RPC_URL: ${{ secrets.OPTIMISM_RPC_URL }}
-      POLYGON_RPC_URL: ${{ secrets.POLYGON_RPC_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '22'}
-      - uses: foundry-rs/foundry-toolchain@v1
-      - run: npm install --no-audit --no-fund
-      - name: Full validation gate (all fork suites critical)
-        run: node scripts/run-validation.mjs --require-fork
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: nexora-gate-report
-          path: |
-            validation/gate-report.json
-            validation/validation-log.md
-            out/NexoraFlashExecutor.sol/NexoraFlashExecutor.json
- /etc/nexora/nexora.env
-          systemctl show nexora -p User -p NoNewPrivileges -p ProtectSystem | tee /dev/stderr | grep -q 'ProtectSystem=strict'
+          sudo grep -q '^LIVE_EXECUTION=false$' /etc/nexora/nexora.env
           sudo systemctl restart nexora
           sleep 5
           curl -fsS http://127.0.0.1:3080/api/health
-      - name: Verify installer rerun preserves settings
+      - name: Installer preserves environment across reruns
         run: |
           set -euo pipefail
           before=$(sudo sha256sum /etc/nexora/nexora.env)

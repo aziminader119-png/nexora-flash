@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 /*
- * NEXORA Flash Executor v1.0
+ * NEXORA Flash Executor v1.1 (long-cycle capability; disabled by default)
  *
  * Atomic flash-loan arbitrage: borrow -> N allow-listed swaps -> repay principal + fee -> send surplus.
  * Every check that protects funds is on-chain; the off-chain bot cannot weaken them.
@@ -80,8 +80,9 @@ contract NexoraFlashExecutor {
     uint8 public constant DEX_V3_DEADLINE = 1;
     uint8 public constant DEX_V3_ROUTER02 = 2;
 
-    uint256 public constant MAX_LEGS = 4;
-    string public constant VERSION = "1.0.0";
+    uint256 public constant MAX_LEGS = 10;
+    uint256 public maxRouteLegs = 4; // owner must explicitly approve longer routes
+    string public constant VERSION = "1.1.0";
 
     struct Leg {
         address router;
@@ -127,6 +128,7 @@ contract NexoraFlashExecutor {
     event RouterSet(address indexed router, bool enabled);
     event TokenSet(address indexed token, bool enabled);
     event MaxLoanSet(address indexed asset, uint256 amount);
+    event MaxRouteLegsSet(uint256 limit);
     event OperatorSet(address indexed newOperator);
     event ProfitReceiverSet(address indexed receiver);
     event Paused(bool isPaused, address indexed by);
@@ -170,6 +172,13 @@ contract NexoraFlashExecutor {
     function setMaxLoan(address asset, uint256 amount) external onlyOwner whenIdle {
         maxLoan[asset] = amount;
         emit MaxLoanSet(asset, amount);
+    }
+
+    /// Requires an explicit cold-wallet action before enabling 5-10 swap plans.
+    function setMaxRouteLegs(uint256 limit) external onlyOwner whenIdle {
+        require(limit >= 2 && limit <= MAX_LEGS, "bad leg limit");
+        maxRouteLegs = limit;
+        emit MaxRouteLegsSet(limit);
     }
 
     function setOperator(address operator_) external onlyOwner whenIdle {
@@ -265,7 +274,7 @@ contract NexoraFlashExecutor {
         require(block.timestamp <= plan.deadline, "expired");
         require(plan.minProfit > 0, "positive min profit required");
         uint256 n = plan.legs.length;
-        require(n >= 2 && n <= MAX_LEGS, "leg count");
+        require(n >= 2 && n <= MAX_LEGS && n <= maxRouteLegs, "leg count");
         require(plan.legs[0].tokenIn == plan.asset, "route must start with asset");
         require(plan.legs[n - 1].tokenOut == plan.asset, "route must end with asset");
         for (uint256 i = 0; i < n; i++) {

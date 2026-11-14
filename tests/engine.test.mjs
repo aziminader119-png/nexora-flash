@@ -97,7 +97,7 @@ test('long-route trading requires separate opt-in, fork test and owner-approved 
   assert.equal(r.chain.broadcasts.length, 0);
 
   const report = passingReport();
-  report.forge.fork.push({suite:'ForkBaseTest', test:'test_multihop_roundTrip', status:'Success'});
+  report.forge.fork.push({suite:'ForkBaseTest', test:'test_multihop_realVenues_roundTrip', status:'Success'});
   r = rig({longRouteEnabled: true, report});
   assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /on-chain route length not authorized/);
   assert.equal(r.chain.broadcasts.length, 0);
@@ -105,6 +105,24 @@ test('long-route trading requires separate opt-in, fork test and owner-approved 
   r = rig({longRouteEnabled: true, report});
   r.chain.exe.maxRouteLegs = 6n;
   assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /long route not approved by cold owner/);
+  assert.equal(r.chain.broadcasts.length, 0);
+});
+
+test('AUDIT H-1: mock-venue fork mechanics passes cannot unlock funded long routes', async () => {
+  const report = passingReport();
+  for (const name of ['test_longRouteMechanics_fiveLegs', 'test_longRouteMechanics_tenLegs', 'test_multihop_roundTrip'])
+    report.forge.fork.push({suite: 'ForkBaseTest', test: name, status: 'Success'});
+  const r = rig({longRouteEnabled: true, report});
+  const c = await r.scan();
+  const legs = [c.legs[0]];
+  const tokens = ['0x' + '11'.repeat(20), '0x' + '12'.repeat(20), '0x' + '13'.repeat(20), '0x' + '14'.repeat(20)];
+  let prev = c.legs[0].tokenOut;
+  for (const token of tokens) { legs.push({...c.legs[0], tokenIn: prev, tokenOut: token}); prev = token; }
+  legs.push({...c.legs[1], tokenIn: prev});
+  const candidate = {...c, legs, mode: 'MULTIHOP_EXECUTION_CANDIDATE', hopCount: legs.length, executable: true, id: c.id + ':mock-fork'};
+  const attempt = await r.ex.attempt(candidate, r.net);
+  assert.equal(attempt.status, 'blocked');
+  assert.match(attempt.reason, /long-cycle fork execution gate missing/);
   assert.equal(r.chain.broadcasts.length, 0);
 });
 

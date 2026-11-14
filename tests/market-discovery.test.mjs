@@ -50,7 +50,7 @@ test('ten curated venue targets are unique and never treated as trading permissi
  assert.equal(new Set(DISCOVERY_VENUES.map(v=>v.name)).size,10);
  assert.ok(DISCOVERY_VENUES.every(v=>v.ids.length>0 && v.chains.length>0));
  const output=discoverPublishedSpreads([pool(1,1),pool(2,1.005)],'base');
- assert.equal(output.venueCoverage.targets,7);
+ assert.equal(output.venueCoverage.targets,8);
  assert.deepEqual(new Set(output.venueCoverage.observed.map(x=>x.name)),new Set(['Uniswap','Aerodrome']));
  assert.ok(output.venueCoverage.missing.includes('PancakeSwap'));
  assert.equal(output.signals[0].executable,false);

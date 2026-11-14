@@ -1,4 +1,4 @@
-// NEXORA v1.0 service: automatic multi-network scanning, gated unattended execution, single-page dashboard.
+// NEXORA v1.2 service: automatic multi-network scanning, gated unattended execution, single-page dashboard.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import {loadSettings, applySettingsUpdate, loanCeiling} from './lib/settings.mjs
 import {scanNetwork} from './lib/scanner.mjs';
 import {discoverMultiHopCycles} from './lib/multihop.mjs';
 import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
+import {RouteObservations} from './lib/route-observations.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -34,6 +35,8 @@ const LONG_ROUTE_CHAIN_IDS = new Set(String(env.MULTIHOP_EXECUTION_CHAINS || '')
 fs.mkdirSync(DATA_DIR, {recursive: true, mode: 0o700});
 const log = createLogger({file: env.LOG_PATH || path.join(DATA_DIR, 'nexora.log.jsonl')});
 const journal = new Journal(env.JOURNAL_PATH || path.join(DATA_DIR, 'execution-journal.jsonl'));
+// Separate read-only scanner data from funded execution history.
+const routeObservations = new RouteObservations(path.join(DATA_DIR, 'route-scan-history.jsonl'));
 
 let settings;
 try { settings = loadSettings(JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))); } catch { settings = loadSettings(null); }
@@ -85,7 +88,9 @@ async function cycle() {
     const eligible = (net) => (globalGateBlockers(gateReport).length ? [] : net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])));
     const routeCatalog = loadMultiHopCatalog(env.MULTIHOP_CATALOG_FILE, nets, log);
     const results = await Promise.all(enabled.map(async (net) => {
-      const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: eligible(net)});
+      // In scan-only mode, quote real lender availability/fees for analytics, but never
+      // infer authorization from quote availability. LIVE keeps strict fork gating.
+      const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: LIVE ? eligible(net) : null});
       r.state.multiHopQuotes = 0;
       r.state.multiHopCycles = 0;
       r.state.multiHopTruncated = false;
@@ -96,7 +101,7 @@ async function cycle() {
         const edges = routeCatalog.get(net.id);
         // Explicit network consent + independently passing on-chain fork suite
         // + canonical venue identity; JSON claims alone are never authority.
-        const allowExecution = LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
+        const allowExecution = LIVE && LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
           && globalGateBlockers(gateReport).length === 0
           && forkTestPassed(gateReport, net.forkSuite, MULTIHOP_FORK_GATE_TEST)
           && catalogHasTrustedVenues(net, edges);
@@ -107,7 +112,7 @@ async function cycle() {
           infos: await Promise.all(net.providers.map(async (p) => {
             try { return {...await chainFor(net).providerInfo(p, net.stable.address, r.state.block), kind: p.kind, address: p.address}; }
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
-          })), preferKinds: eligible(net),
+          })), preferKinds: LIVE ? eligible(net) : null,
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
           at: c.at, allowExecution, rotation: (multiHopTurn.get(net.id) ?? 0),
         });
@@ -125,6 +130,15 @@ async function cycle() {
     const next = [];
     for (const [i, r] of results.entries()) {
       states.set(enabled[i].id, r.state);
+      if (!LIVE) for (const c of r.candidates) {
+        c.executable = false;
+        if (!c.blockers.includes('scan-only: funded execution disabled')) c.blockers.push('scan-only: funded execution disabled');
+        c.profitQualification = c.provider ? 'INDICATIVE_WITH_QUOTED_LENDER_FEE' : 'INCOMPLETE_MISSING_LENDER_FEE';
+      }
+      try {
+        // Full network cycle set is retained before the dashboard top-100 projection.
+        routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});
+      } catch (err) { log('warning', `${enabled[i].name} route observations: ${err.message}`); }
       // Reserve slots for long cycles so 2-leg routes cannot hide 5-10-hop
       // observational opportunities, while preserving the dashboard's total limit.
       const cycles = r.candidates.filter((c) => c.hopCount >= 5);
@@ -168,7 +182,7 @@ const json = (res, code, obj) => { res.writeHead(code, {'Content-Type': 'applica
 function status() {
   const globalBlockers = globalGateBlockers(gateReport);
   return {
-    version: '1.0.0',
+    version: '1.2.0',
     mode: !LIVE ? 'SCAN_ONLY' : settings.paused ? 'PAUSED' : settings.autoExecute ? 'AUTO_EXECUTION' : 'LIVE_MANUAL',
     liveExecutionEnabled: LIVE, longRouteExecutionOptIn: LONG_ROUTES,
     longRouteChainIds: [...LONG_ROUTE_CHAIN_IDS], signer: signer?.address || null, contracts, loanCeiling: loanCeiling(),
@@ -196,6 +210,13 @@ const server = http.createServer(async (req, res) => {
   try {
     if (u.pathname === '/api/health') return json(res, 200, {alive: true, lastScan, paused: settings.paused, pending: journal.pending().length});
     if (u.pathname === '/api/status' && req.method === 'GET') return json(res, 200, status());
+    // Read-only dedicated endpoints: the dashboard keeps its legacy response and 100-item limit.
+    if (req.method === 'GET' && u.pathname === '/api/multihop/cycles')
+      return json(res, 200, routeObservations.cycles(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/multihop/stats')
+      return json(res, 200, routeObservations.stats());
+    if (req.method === 'GET' && u.pathname === '/api/multihop/history')
+      return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
     if (req.method === 'POST' && u.pathname.startsWith('/api/')) {
       if (!authorized(req)) return json(res, 403, {error: 'admin token required'});
       if (u.pathname === '/api/settings') {
@@ -238,7 +259,7 @@ const server = http.createServer(async (req, res) => {
 
 let timer;
 server.listen(PORT, BIND_HOST, () => {
-  log('info', `NEXORA v1.0 on ${BIND_HOST}:${PORT} | live=${LIVE} | gate=${globalGateBlockers(gateReport).length ? 'LOCKED' : 'passed'} | journal pending=${journal.pending().length}`);
+  log('info', `NEXORA v1.2 on ${BIND_HOST}:${PORT} | live=${LIVE} | gate=${globalGateBlockers(gateReport).length ? 'LOCKED' : 'passed'} | journal pending=${journal.pending().length}`);
   cycle();
   timer = setInterval(cycle, INTERVAL_MS);
 });

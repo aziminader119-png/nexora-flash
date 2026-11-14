@@ -120,21 +120,30 @@ async function cycle() {
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
           at: c.at, rotation: (multiHopTurn.get(net.id) ?? 0),
         };
-        const short = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:3, maxDepth:4, maxQuotes:40,
+        // Independent depth budgets guarantee that a 4-hop candidate can
+        // finish even when the 3-hop roots are numerous. Both are quote-only.
+        const tri = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
+          allowExecution:false,
+        });
+        const quad = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:24,
           allowExecution:false,
         });
         const long = await discoverMultiHopCycles({...quoteContext, minDepth:5,
           maxDepth:10, maxQuotes:80, allowExecution});
         const extra = {
-          candidates:[...short.candidates,...long.candidates].sort((a,b)=>b.netEstimate-a.netEstimate),
-          scannedQuotes:short.scannedQuotes+long.scannedQuotes,
-          truncated:short.truncated||long.truncated,
-          rootsExplored:short.rootsExplored+long.rootsExplored,
-          rootsEligible:Math.max(short.rootsEligible,long.rootsEligible),
+          candidates:[...tri.candidates,...quad.candidates,...long.candidates]
+            .sort((a,b)=>b.netEstimate-a.netEstimate),
+          scannedQuotes:tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
+          truncated:tri.truncated||quad.truncated||long.truncated,
+          rootsExplored:tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
+          rootsEligible:Math.max(tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
         };
-        r.state.shortCycleQuotes = short.scannedQuotes;
-        r.state.shortCycleCount = short.candidates.length;
+        r.state.shortCycleQuotes = tri.scannedQuotes+quad.scannedQuotes;
+        r.state.shortCycleCount = tri.candidates.length+quad.candidates.length;
+        r.state.threeHopCycles = tri.candidates.length;
+        r.state.fourHopCycles = quad.candidates.length;
         r.state.longCycleQuotes = long.scannedQuotes;
         r.state.longCycleCount = long.candidates.length;
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);

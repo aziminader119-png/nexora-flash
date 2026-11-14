@@ -66,5 +66,5 @@ test('RPC failure produces no partial route and preserves nonexecution',async()=
 test('quote budgets prevent partial execution and unused budget leaks',async()=>{
  const o=rig();const r=await refineLoanSizes({...o,maxQuotes:1});
  assert.equal(r.refined,0);assert.equal(r.quotes,0);
- assert.throws(()=>refineLoanSizes({...o,maxRoutes:6}),/Invalid refinement inputs/);
+ await assert.rejects(refineLoanSizes({...o,maxRoutes:6}),/Invalid refinement inputs/);
 });

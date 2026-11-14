@@ -267,10 +267,11 @@ contract NexoraFlashExecutorTest is TestBase {
         NexoraFlashExecutor.Plan memory p = _longPlan(5);
         exe.setMaxRouteLegs(5);
         exe.setLongRouteApproved(exe.longRouteHash(p), true);
-        // Even a token direction mutation changes the owner-approved route hash.
-        p.legs[1].tokenOut = p.legs[0].tokenIn;
+        // Swap a previously approved router address while keeping a syntactically valid path.
+        // Token allowlists and topology still pass; only the cold-owner route hash should reject it.
+        p.legs[1].router = p.legs[0].router;
         vm.prank(OPERATOR);
-        vm.expectRevert();
+        vm.expectRevert(bytes("long route not approved"));
         exe.start(p);
     }
 

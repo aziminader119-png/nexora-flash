@@ -93,10 +93,11 @@ async function cycle() {
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
           block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
           nativePrice: BigInt(c.nativePriceUnits),
-          infos: r.state.providers.map((p) => ({
-            ...p, available: p.available == null ? 0n : BigInt(Math.trunc(p.available * (10 ** net.stable.decimals))),
-            feeParam: p.feeParam != null ? Number(p.feeParam) : 0,
+          infos: await Promise.all(net.providers.map(async (p) => {
+            try { return {...await chainFor(net).providerInfo(p, net.stable.address, r.state.block), kind: p.kind, address: p.address}; }
+            catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: eligible(net),
+          l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
           at: c.at,
         });
         r.state.multiHopQuotes = extra.scannedQuotes;

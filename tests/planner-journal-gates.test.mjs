@@ -92,7 +92,10 @@ test('journal: pending tx survives restart and resolves', () => {
 test('journal: torn final line after crash is ignored', () => {
   const f = tmp();
   fs.writeFileSync(f, JSON.stringify({kind: 'tx', status: 'submitted', chainId: 1, nonce: 0, hash: '0x1', purpose: 'arbitrage', at: new Date().toISOString()}) + '\n{"kind":"tx","sta');
-  assert.equal(new Journal(f).pending(1).length, 1);
+  const restarted=new Journal(f);
+  assert.equal(restarted.pending(1).length, 1);
+  assert.equal(restarted.integrityOk,false);
+  assert.equal(restarted.integrityErrors,1);
 });
 
 test('journal: gas budget counts reservations until actual cost is known', () => {
@@ -146,4 +149,26 @@ test('gate: forge --json parsing', () => {
   assert.equal(rows.length, 2);
   assert.equal(forkTestPassed({forge: {fork: rows}}, 'ForkBaseTest', 'test_aave_roundTrip'), true);
   assert.equal(forkTestPassed({forge: {fork: rows}}, 'ForkBaseTest', 'test_morpho_roundTrip'), false);
+});
+
+test('journal: all valid events remain readable while corrupt middle or forged final event locks integrity',()=>{
+ const f=tmp();
+ const now=new Date().toISOString();
+ fs.writeFileSync(f,JSON.stringify({kind:'tx',status:'submitted',chainId:8453,nonce:1,hash:'0xabc',at:now})+
+  '\nTHIS_IS_NOT_JSON\n'+JSON.stringify({kind:'tx',status:'confirmed',chainId:8453,nonce:1,hash:'0xabc',at:now})+
+  '\n'+JSON.stringify({hello:'bad',at:now})+'\n');
+ const j=new Journal(f);
+ assert.equal(j.integrityOk,false);
+ assert.equal(j.integrityErrors,2);
+ assert.equal(j.events.length,2);
+ assert.equal(j.pending(8453).length,0);
+});
+test('journal: normal empty and valid journals retain integrity',()=>{
+ const f=tmp(),j=new Journal(f);
+ assert.equal(j.integrityOk,true);
+ j.append({kind:'tx',status:'submitted',purpose:'arbitrage',chainId:8453,nonce:0,hash:'0xok'});
+ const restored=new Journal(f);
+ assert.equal(restored.integrityOk,true);
+ assert.equal(restored.integrityErrors,0);
+ assert.equal(restored.pending(8453).length,1);
 });

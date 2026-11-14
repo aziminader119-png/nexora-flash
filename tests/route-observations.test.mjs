@@ -92,3 +92,14 @@ test('scan-only uses on-chain lender quotes without ever allowing funded executi
  assert.match(source,/scan-only: funded execution disabled/);
  assert.match(source,/INCOMPLETE_MISSING_LENDER_FEE/);
 });
+
+test('impact filter fails closed when route lacks a complete on-chain probe',()=>{
+ const db=new RouteObservations();
+ const safe={...make(1,-1),diagnostics:{probesIncomplete:false,maximumImpactBps:50,liquidityRisk:'NO_LARGE_IMPACT_OBSERVED'}};
+ const bad={...make(2,-2),diagnostics:{probesIncomplete:false,maximumImpactBps:2000,liquidityRisk:'HIGH'}};
+ const unknown={...make(3,-3),diagnostics:{probesIncomplete:true,maximumImpactBps:0,liquidityRisk:'UNKNOWN'}};
+ db.record(net,state,[safe,bad,unknown]);
+ assert.equal(db.cycles({maxImpactBps:'300'}).total,1);
+ assert.equal(db.cycles({maxImpactBps:'300'}).cycles[0].id,'cycle-1');
+ assert.throws(()=>db.cycles({maxImpactBps:'10001'}),/Invalid/);
+});

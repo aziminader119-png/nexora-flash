@@ -48,7 +48,8 @@ test('invalid envelopes fail closed',()=>{
 });
 test('server clears old opportunities before each scan and uses health-projected results',()=>{
  const s=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
- assert.match(s,/opportunities = \[\];\s*scans\+\+/);
+ assert.match(s,/const previousScanCandidates=opportunities;\s*opportunities = \[\];\s*scans\+\+/);
+ assert.match(s,/previousScanCandidates\.filter\(c=>c\.chainId===net\.id\)/);
  assert.match(s,/projectCurrentScan\(enabled,results\)/);
  assert.match(s,/opportunities=projection\.candidates/);
  assert.match(s,/if \(LIVE && settings\.autoExecute\)/);

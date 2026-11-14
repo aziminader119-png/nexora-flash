@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {NETWORKS, withEnvProviders, PROVIDER_FORK_TEST} from './lib/networks.mjs';
+import {NETWORKS, withEnvProviders, PROVIDER_FORK_TEST, MULTIHOP_FORK_GATE_TEST} from './lib/networks.mjs';
 import {loadSettings, applySettingsUpdate, loanCeiling} from './lib/settings.mjs';
 import {scanNetwork} from './lib/scanner.mjs';
 import {discoverMultiHopCycles} from './lib/multihop.mjs';
@@ -97,7 +97,7 @@ async function cycle() {
         // + canonical venue identity; JSON claims alone are never authority.
         const allowExecution = LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
           && globalGateBlockers(gateReport).length === 0
-          && forkTestPassed(gateReport, net.forkSuite, 'test_multihop_roundTrip')
+          && forkTestPassed(gateReport, net.forkSuite, MULTIHOP_FORK_GATE_TEST)
           && catalogHasTrustedVenues(net, edges);
         const extra = await discoverMultiHopCycles({
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,

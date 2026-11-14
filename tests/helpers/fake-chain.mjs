@@ -93,6 +93,7 @@ export class FakeChain {
     return {owner: e.owner, operator: e.operator, paused: e.paused, providerKind: e.providerKind[provider] || 0, maxLoan: e.maxLoan,
       maxRouteLegs: e.maxRouteLegs, routersAllowed: routers.map((r) => !!e.routers[r]), tokensAllowed: tokens.map((t) => !!e.tokens[Object.keys(e.tokens).find((k) => lc(k) === lc(t))])};
   }
+  async longRouteApproval() { this.guard(); return {hash: '0x'+'12'.repeat(32), approved: this.exe.longRouteApproved === true}; }
   encodeStart(plan) { return '0x' + Buffer.from(ser({fn: 'start', plan})).toString('hex'); }
   encodePause() { return '0x' + Buffer.from(ser({fn: 'pause'})).toString('hex'); }
   decodeCall(data) { return data === '0x' ? {fn: 'transfer'} : de(Buffer.from(data.slice(2), 'hex').toString()); }

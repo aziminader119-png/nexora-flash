@@ -80,8 +80,8 @@ contract NexoraFlashExecutor {
     uint8 public constant DEX_V3_DEADLINE = 1;
     uint8 public constant DEX_V3_ROUTER02 = 2;
 
-    uint256 public constant MAX_LEGS = 4;
-    string public constant VERSION = "1.0.0";
+    uint256 public constant MAX_LEGS = 10;
+    string public constant VERSION = "1.1.0-multihop";
 
     struct Leg {
         address router;

@@ -6,7 +6,7 @@
 ## Implemented in this phase (PR #27)
 1. `lib/catalog-preflight.mjs`: validates explicit on-chain route catalog
    at one pinned block: chain ID, bytecode existence, token bytecode/decimals,
-   conservative bounded test quotes, invalid quote and wrong network rejection.
+   conservative bounded test quotes, invalid quote and wrong network rejection.\n   The audit CLI checks every catalog edge in bounded 12-edge batches at\n   the same pinned block; it never marks a partially verified catalog passed.
    Does not verify a factory signature, token implementation behavior,
    actual reserves or execution mechanics. Any partial coverage is NOT passed.
 2. `scripts/audit-multihop-catalog.mjs`: command-line read-only report for

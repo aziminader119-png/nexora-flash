@@ -107,7 +107,9 @@ async function cycle() {
           && globalGateBlockers(gateReport).length === 0
           && forkTestPassed(gateReport, net.forkSuite, MULTIHOP_FORK_GATE_TEST)
           && catalogHasTrustedVenues(net, edges);
-        const extra = await discoverMultiHopCycles({
+        // Keep short 3-4 hop catalog routes separate from the existing long
+        // execution gate: new short routes are ALWAYS observation-only.
+        const quoteContext = {
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
           block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
           nativePrice: BigInt(c.nativePriceUnits),
@@ -116,8 +118,34 @@ async function cycle() {
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: LIVE ? eligible(net) : null,
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
-          at: c.at, allowExecution, rotation: (multiHopTurn.get(net.id) ?? 0),
+          at: c.at, rotation: (multiHopTurn.get(net.id) ?? 0),
+        };
+        // Independent depth budgets guarantee that a 4-hop candidate can
+        // finish even when the 3-hop roots are numerous. Both are quote-only.
+        const tri = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
+          allowExecution:false,
         });
+        const quad = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:24,
+          allowExecution:false,
+        });
+        const long = await discoverMultiHopCycles({...quoteContext, minDepth:5,
+          maxDepth:10, maxQuotes:80, allowExecution});
+        const extra = {
+          candidates:[...tri.candidates,...quad.candidates,...long.candidates]
+            .sort((a,b)=>b.netEstimate-a.netEstimate),
+          scannedQuotes:tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
+          truncated:tri.truncated||quad.truncated||long.truncated,
+          rootsExplored:tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
+          rootsEligible:Math.max(tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
+        };
+        r.state.shortCycleQuotes = tri.scannedQuotes+quad.scannedQuotes;
+        r.state.shortCycleCount = tri.candidates.length+quad.candidates.length;
+        r.state.threeHopCycles = tri.candidates.length;
+        r.state.fourHopCycles = quad.candidates.length;
+        r.state.longCycleQuotes = long.scannedQuotes;
+        r.state.longCycleCount = long.candidates.length;
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
@@ -162,10 +190,10 @@ async function cycle() {
         // Full network cycle set is retained before the dashboard top-100 projection.
         routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});
       } catch (err) { log('warning', `${enabled[i].name} route observations: ${err.message}`); }
-      // Reserve slots for long cycles so 2-leg routes cannot hide 5-10-hop
-      // observational opportunities, while preserving the dashboard's total limit.
-      const cycles = r.candidates.filter((c) => c.hopCount >= 5);
-      const direct = r.candidates.filter((c) => !(c.hopCount >= 5));
+      // Reserve 3-10-hop observation slots while preserving the dashboard's
+      // historical per-network projection and funded execution gates.
+      const cycles = r.candidates.filter((c) => c.hopCount >= 3);
+      const direct = r.candidates.filter((c) => !(c.hopCount >= 3));
       next.push(...direct.slice(0, 20), ...cycles.slice(0, 5));
       const pos = r.candidates.filter((c) => c.netEstimate >= settings.minProfitUSD);
       if (r.state.status !== 'quotes-live') log('warning', `${r.state.name}: ${r.state.error}`);

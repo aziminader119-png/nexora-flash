@@ -262,3 +262,25 @@ test('four loan sizes all get root coverage and first-hop rotation changes cover
  assert.notDeepEqual(a,b);
  assert.ok([...first.candidates,...second.candidates].every(c=>c.mode==='MULTIHOP_OBSERVE_ONLY'&&!c.executable));
 });
+
+test('scan-only 3-hop and 4-hop discovery returns same-block quotes and never creates executable trades',async()=>{
+  for(const n of [3,4]){
+    const o=setup(n);
+    o.settings.sizeSteps=[0.05,0.1,0.25,0.5];
+    const r=await run(o,{minDepth:n,maxDepth:n,maxQuotes:24,allowExecution:false});
+    assert.equal(r.candidates.length,4,'all four loan sizes at depth '+n);
+    assert.deepEqual(new Set(r.candidates.map(c=>c.size)),new Set([50,100,250,500]));
+    assert.ok(r.candidates.every(c=>c.hopCount===n && c.executable===false));
+    assert.ok(o.chain.calls.every(q=>q.block===4321),'quotes must be pinned to one block');
+    assert.ok(r.scannedQuotes<=24);
+  }
+});
+
+test('a 3-hop scanner does not report a 4-hop path, or invent a partial cycle',async()=>{
+  const o=setup(4);
+  const three=await run(o,{minDepth:3,maxDepth:3,maxQuotes:24});
+  assert.equal(three.candidates.length,0);
+  const four=await run(o,{minDepth:4,maxDepth:4,maxQuotes:24});
+  assert.equal(four.candidates.length,1);
+  assert.equal(four.candidates[0].executable,false);
+});

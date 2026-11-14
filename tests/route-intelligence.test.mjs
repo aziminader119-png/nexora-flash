@@ -55,3 +55,13 @@ test('server exposes read-only size ranking; no effect on live execution flag',(
  assert.match(server,/chooseImpactProbes\(extra\.candidates/);
  assert.match(server,/if \(LIVE && settings\.autoExecute\)/);
 });
+
+test('best economic size can be unsafe while smaller complete size remains reviewable',()=>{
+ const r=rankRouteFamilies([cand(200,15,{impact:null}),cand(100,12,{impact:40})]);
+ assert.equal(r.families[0].bestQuotedSizeUSD,200);
+ assert.equal(r.families[0].assessment,'IMPACT_UNVERIFIED');
+ assert.equal(r.families[0].bestReviewableSizeUSD,100);
+ assert.equal(r.families[0].bestReviewableNetEstimateUSD,12);
+ assert.equal(r.families[0].eligibleForForkReview,true);
+ assert.equal(r.families[0].executable,false);
+});

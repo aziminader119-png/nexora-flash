@@ -14,6 +14,7 @@ import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-dia
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
 import {refineLoanSizes} from './lib/route-refinement.mjs';
+import {routeDepthBudgets} from './lib/route-budget.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -133,24 +134,30 @@ async function cycle() {
         };
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
+        const priorDepthObservations = [
+          ...opportunities.filter(c=>c.chainId===net.id),
+          ...(routeObservations.latest.get(net.id)?.cycles||[]),
+        ];
+        const budgetPlan = routeDepthBudgets(priorDepthObservations);
+        r.state.depthQuoteBudgets = budgetPlan.budgets;
         const sharedQuoteCache = new Map(); // One exact-network/block cycle only
         // Expand 2-hop discovery beyond the legacy stable/wrapped pair,
         // but only along explicitly cataloged on-chain pools. It is NEVER
         // promoted to a funded 2-hop opportunity.
         const duo = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:2, maxDepth:2, maxQuotes:24,
+          ...quoteContext, minDepth:2, maxDepth:2, maxQuotes:budgetPlan.budgets.two,
           allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const tri = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
+          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:budgetPlan.budgets.three,
           allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const quad = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:24,
+          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:budgetPlan.budgets.four,
           allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const long = await discoverMultiHopCycles({...quoteContext, minDepth:5,
-          maxDepth:10, maxQuotes:80, allowExecution,
+          maxDepth:10, maxQuotes:budgetPlan.budgets.long, allowExecution,
           quoteCache:allowExecution ? null : sharedQuoteCache});
         const extra = {
           candidates:[...duo.candidates,...tri.candidates,...quad.candidates,...long.candidates]

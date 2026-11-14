@@ -191,3 +191,41 @@ test('first-hop traversal rotates by quoted block without weakening safety gates
   assert.equal(first.candidates[0].executable, false);
   assert.equal(second.candidates[0].executable, false);
 });
+
+function star(k) {
+  const net = testNet();
+  const edges = [];
+  for (let c = 0; c < k; c++) {
+    const coins = [S, ...Array.from({length: 4}, (_, i) => addr(5000 + c * 10 + i)), S];
+    for (let i = 0; i < 5; i++) edges.push({
+      pool: {key: `c${c}-p${i}`, name: `Cycle ${c} DEX ${i}`, type: 'v2', router: addr(7000 + c * 10 + i), routerKind: 0, fee: 0, forkValidated: true},
+      tokenIn: {address: coins[i], symbol: 'X'}, tokenOut: {address: coins[i + 1], symbol: i === 4 ? 'USDC' : 'X'},
+    });
+  }
+  const chain = {calls: [], async quoteV2(router, amount, a, b, block) { this.calls.push({router, amount, block}); return amount * 101n / 100n; }};
+  const infos = [{kind: 'AAVE_V3', address: AAVE, ok: true, available: 1_000_000_000000n, feeModel: 'aave-bps', feeParam: 5}];
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sizeSteps = [1];
+  return {net: {...net, routeEdges: edges}, chain, settings, infos};
+}
+const firstCycle = (r) => r.candidates[0]?.legs[0].pool.split('-')[0];
+
+test('AUDIT M-A: first-hop rotation does not alias with a fixed block stride between scans', async () => {
+  const o = star(5);
+  const seen = new Set();
+  for (let scan = 0; scan < 5; scan++) {
+    const r = await run(o, {block: 1000 + 15 * scan, maxQuotes: 5, rotation: scan});
+    seen.add(firstCycle(r));
+  }
+  assert.equal(seen.size, 5, `every first-hop branch must get a turn; saw ${[...seen]}`);
+});
+
+test('AUDIT M-B: quote budget is shared fairly across loan sizes (full size not starved)', async () => {
+  const o = star(3);
+  o.settings.sizeSteps = [0.5, 1];
+  const r = await run(o, {maxQuotes: 10});
+  const sizes = new Set(r.candidates.map((c) => c.size));
+  assert.ok(sizes.has(1000), `the full $1,000 loan size must be explored; explored ${[...sizes]}`);
+  assert.ok(sizes.has(500));
+  assert.equal(r.truncated, true);
+});

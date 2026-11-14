@@ -12,6 +12,7 @@ import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catal
 import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
+import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairs} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -162,7 +163,7 @@ async function cycle() {
             probesIncomplete:true,caveat:'Raw token amounts are not comparable USD values.'};
           try {
             const samples = await probeRouteImpact({chain:chainFor(net),
-              candidates:extra.candidates,routeEdges:edges,block:r.state.block,
+              candidates:chooseImpactProbes(extra.candidates,{minProfitUSD:settings.minProfitUSD,maxRoutes:2}),routeEdges:edges,block:r.state.block,
               maxRoutes:2,maxProbes:10});
             for (const c of extra.candidates) {
               const d = samples.diagnostics.get(c.id);
@@ -302,6 +303,15 @@ const server = http.createServer(async (req, res) => {
         return json(res,503,{mode:'DISCOVERY_ONLY',chain,
           error:'published market data unavailable',actionable:false});
       }
+    }
+    if (req.method === 'GET' && u.pathname === '/api/routes/intelligence') {
+      const all = [...routeObservations.latest.values()].flatMap(x=>x.cycles);
+      // Match the current per-network 2-hop dashboard slice, and the full
+      // catalog 3-10-hop observations. All candidates stay non-executable.
+      const twoHop = opportunities.filter(c=>!c.hopCount || c.hopCount===2);
+      return json(res,200,rankRouteFamilies([...twoHop,...all],{
+        minProfitUSD:settings.minProfitUSD,maxImpactBps:300,maxFamilies:30,
+      }));
     }
     if (req.method === 'GET' && u.pathname === '/api/routes/ranked') {
       // Read-only ranking of the SAME latest opportunities as the dashboard.

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {scanNetwork, sizesFor} from '../lib/scanner.mjs';
 import {DEFAULT_SETTINGS} from '../lib/settings.mjs';
 import {routeGasUnits, weiToStable} from '../lib/profit.mjs';
@@ -99,4 +100,31 @@ test('provider selection is restricted to gate-eligible lenders when available',
   assert.ok(fallback.candidates.every((c) => !c.executable && c.blockers.some((x) => /no flash provider/.test(x))));
   const none = await scanNetwork({chain, net: testNet(), settings: settings(), preferKinds: []});
   assert.ok(none.candidates.every((c) => !c.executable && c.provider === null), 'empty validated-provider list must fail closed');
+});
+
+test('raw gas/native prices remain available even when all buy quotes fail',async()=>{
+ const chain=new FakeChain(),net=testNet();
+ const originalV2=chain.quoteV2.bind(chain),originalV3=chain.quoteV3.bind(chain);
+ chain.quoteV2=async(router,amount,a,b,block)=>{
+  if(a.toLowerCase()===net.stable.address.toLowerCase())throw Error('buy quote failure');
+  return originalV2(router,amount,a,b,block);
+ };
+ chain.quoteV3=async(quoter,a,b,fee,amount,block)=>{
+  if(a.toLowerCase()===net.stable.address.toLowerCase())throw Error('buy quote failure');
+  return originalV3(quoter,a,b,fee,amount,block);
+ };
+ const {state,candidates}=await scanNetwork({chain,net,settings:settings()});
+ assert.equal(state.status,'quotes-live');
+ assert.equal(candidates.length,0);
+ assert.ok(Number.isSafeInteger(state.block));
+ assert.match(state.gasPriceWei,/^[1-9][0-9]*$/);
+ assert.match(state.nativePriceUnits,/^[1-9][0-9]*$/);
+ assert.ok(Number.isFinite(Date.parse(state.quotedAt)));
+});
+test('catalog scan no longer depends on the legacy USDC-WETH result count',()=>{
+ const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.doesNotMatch(server,/if \(!c\) return r;/);
+ assert.match(server,/gasPrice: BigInt\(r\.state\.gasPriceWei\)/);
+ assert.match(server,/nativePrice: BigInt\(r\.state\.nativePriceUnits\)/);
+ assert.match(server,/size refinement: /);
 });

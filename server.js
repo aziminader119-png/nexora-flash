@@ -15,6 +15,7 @@ import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs'
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
 import {refineLoanSizes} from './lib/route-refinement.mjs';
 import {routeDepthBudgets} from './lib/route-budget.mjs';
+import {projectCurrentScan} from './lib/scan-reliability.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -84,6 +85,10 @@ let busy = false, lastScan = null, scans = 0;
 async function cycle() {
   if (busy) return;
   busy = true;
+  // Previous outcomes may weight read-only future scan budgets, but may
+  // NEVER be displayed or executed as fresh opportunities.
+  const previousScanCandidates=opportunities;
+  opportunities = [];
   scans++;
   try {
     gateReport = loadGateReport(GATE_REPORT);
@@ -110,8 +115,9 @@ async function cycle() {
       r.state.multiHopTruncated = false;
       if (r.state.status !== 'quotes-live' || !routeCatalog.has(net.id)) return r;
       try {
-        const c = r.candidates[0];
-        if (!c) return r;
+        // A zero-result legacy USDC/WETH quote does not imply the catalog
+        // contains no profitable 2-10 hop cycle. Scanner state has its own
+        // block-pinned gas/native prices independent of legacy candidates.
         const edges = routeCatalog.get(net.id);
         // Explicit network consent + independently passing on-chain fork suite
         // + canonical venue identity; JSON claims alone are never authority.
@@ -123,19 +129,19 @@ async function cycle() {
         // execution gate: new short routes are ALWAYS observation-only.
         const quoteContext = {
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
-          block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
-          nativePrice: BigInt(c.nativePriceUnits),
+          block: r.state.block, gasPrice: BigInt(r.state.gasPriceWei),
+          nativePrice: BigInt(r.state.nativePriceUnits),
           infos: await Promise.all(net.providers.map(async (p) => {
             try { return {...await chainFor(net).providerInfo(p, net.stable.address, r.state.block), kind: p.kind, address: p.address}; }
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: LIVE ? eligible(net) : null,
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
-          at: c.at, rotation: (multiHopTurn.get(net.id) ?? 0),
+          at: r.state.quotedAt, rotation: (multiHopTurn.get(net.id) ?? 0),
         };
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
         const priorDepthObservations = [
-          ...opportunities.filter(c=>c.chainId===net.id),
+          ...previousScanCandidates.filter(c=>c.chainId===net.id),
           ...(routeObservations.latest.get(net.id)?.cycles||[]),
         ];
         const budgetPlan = routeDepthBudgets(priorDepthObservations);
@@ -179,15 +185,22 @@ async function cycle() {
         // Only re-quote near-profitable observed paths at an intermediate
         // loan amount. No public price, trade simulation, or authorization.
         if (!LIVE) {
-          const refined = await refineLoanSizes({
-            ...quoteContext,candidates:extra.candidates,
-            maxQuotes:24,maxRoutes:2,nearMissUSD:1,
-          });
-          extra.candidates.push(...refined.candidates);
-          extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
-          extra.scannedQuotes+=refined.quotes;
-          r.state.refinementQuotes=refined.quotes;
-          r.state.refinementCycles=refined.refined;
+          try {
+            const refined = await refineLoanSizes({
+              ...quoteContext,candidates:extra.candidates,
+              maxQuotes:24,maxRoutes:2,nearMissUSD:1,
+            });
+            extra.candidates.push(...refined.candidates);
+            extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
+            extra.scannedQuotes+=refined.quotes;
+            r.state.refinementQuotes=refined.quotes;
+            r.state.refinementCycles=refined.refined;
+          } catch(e) {
+            // A bonus size refinement must NEVER discard previously valid
+            // catalog quotes from other paths.
+            r.state.refinementError=String(e.message||e).slice(0,160);
+            log('warning', net.name+' size refinement: '+r.state.refinementError);
+          }
         }
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
@@ -221,29 +234,33 @@ async function cycle() {
       }
       return r;
     }));
-    const next = [];
     for (const [i, r] of results.entries()) {
+      // A partially failed scan is never allowed to carry stale paths.
       states.set(enabled[i].id, r.state);
       if (!LIVE) for (const c of r.candidates) {
         c.executable = false;
         if (!c.blockers.includes('scan-only: funded execution disabled')) c.blockers.push('scan-only: funded execution disabled');
         c.profitQualification = c.provider ? 'INDICATIVE_WITH_QUOTED_LENDER_FEE' : 'INCOMPLETE_MISSING_LENDER_FEE';
       }
+      // Failed network scans also supersede old read-only route history:
+      // no stale quote can leak through /api/multihop/* or intelligence.
       try {
-        // Full network cycle set is retained before the dashboard top-100 projection.
-        routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});
-      } catch (err) { log('warning', `${enabled[i].name} route observations: ${err.message}`); }
-      // Reserve 3-10-hop observation slots while preserving the dashboard's
-      // historical per-network projection and funded execution gates.
-      const cycles = r.candidates.filter((c) => c.hopCount >= 3);
-      const direct = r.candidates.filter((c) => !(c.hopCount >= 3));
-      next.push(...direct.slice(0, 20), ...cycles.slice(0, 5));
-      const pos = r.candidates.filter((c) => c.netEstimate >= settings.minProfitUSD);
-      if (r.state.status !== 'quotes-live') log('warning', `${r.state.name}: ${r.state.error}`);
-      else log(pos.length ? 'candidate' : 'info', `${r.state.name}: ${r.candidates.length} quoted routes, ${pos.length} above $${settings.minProfitUSD} (block ${r.state.block})`);
+        routeObservations.record(enabled[i],r.state,
+          r.state.status==='quotes-live'?r.candidates:[],
+          {minimumProfit:settings.minProfitUSD});
+      } catch(err) { log('warning',`${enabled[i].name} route observations: ${err.message}`); }
+      const pos = r.candidates.filter(c=>c.netEstimate >= settings.minProfitUSD);
+      if(r.state.status !== 'quotes-live')
+        log('warning',`${enabled[i].name}: ${r.state.error||'scan unavailable'}`);
+      else log(pos.length?'candidate':'info',
+        `${enabled[i].name}: ${r.candidates.length} quoted routes, ${pos.length} above $${settings.minProfitUSD} (block ${r.state.block})`);
     }
-    for (const id of states.keys()) if (!settings.enabledChains.includes(id)) states.delete(id);
-    opportunities = next.sort((a, b) => b.netEstimate - a.netEstimate);
+    for(const id of states.keys()) if(!settings.enabledChains.includes(id))states.delete(id);
+    const projection=projectCurrentScan(enabled,results);
+    for(const networkState of projection.networks)states.set(networkState.chainId,networkState);
+    opportunities=projection.candidates;
+    if(projection.failures.length)
+      log('warning',`Partial scan: ${projection.healthyNetworks}/${projection.totalNetworks} networks healthy; failed-network candidates excluded`);
     if (LIVE && settings.autoExecute) {
       for (const net of enabled.filter((n) => settings.liveChains.includes(n.id))) {
         const best = opportunities.find((c) => c.chainId === net.id && c.executable && c.netEstimate >= settings.minProfitUSD);
@@ -251,6 +268,16 @@ async function cycle() {
       }
     }
   } catch (e) {
+    // An exception in any scan phase invalidates the entire current quote
+    // snapshot. Never display stale per-network health as if it succeeded.
+    opportunities=[];
+    for(const net of nets.filter(n=>settings.enabledChains.includes(n.id))) {
+      const failed={chainId:net.id,name:net.name,status:'unavailable',
+        block:null,error:'scan cycle failed; current quotes not available'};
+      states.set(net.id,failed);
+      try {routeObservations.record(net,failed,[],{minimumProfit:settings.minProfitUSD});}
+      catch {/* never let error reporting prevent fail-closed invalidation */ }
+    }
     log('error', `Cycle failed: ${e.message}`);
   } finally {
     lastScan = new Date().toISOString();

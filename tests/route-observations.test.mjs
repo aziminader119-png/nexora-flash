@@ -62,7 +62,8 @@ test('unqualified lender never makes a negative observed quote executable',()=>{
 
 test('legacy /api/status and new API routes coexist without changing UI or execution flags',()=>{
  const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
- assert.match(source,/routeObservations\.record\(enabled\[i\], r\.state, r\.candidates/);
+ assert.match(source,/routeObservations\.record\(enabled\[i\],\s*r\.state,/);
+ assert.match(source,/r\.state\.status==='quotes-live'\?r\.candidates:\[\]/);
  assert.match(source,/\/api\/multihop\/cycles/);
  assert.match(source,/\/api\/multihop\/stats/);
  assert.match(source,/\/api\/multihop\/history/);

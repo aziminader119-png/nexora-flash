@@ -88,7 +88,9 @@ async function cycle() {
     const eligible = (net) => (globalGateBlockers(gateReport).length ? [] : net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])));
     const routeCatalog = loadMultiHopCatalog(env.MULTIHOP_CATALOG_FILE, nets, log);
     const results = await Promise.all(enabled.map(async (net) => {
-      const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: eligible(net)});
+      // In scan-only mode, quote real lender availability/fees for analytics, but never
+      // infer authorization from quote availability. LIVE keeps strict fork gating.
+      const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: LIVE ? eligible(net) : null});
       r.state.multiHopQuotes = 0;
       r.state.multiHopCycles = 0;
       r.state.multiHopTruncated = false;
@@ -99,7 +101,7 @@ async function cycle() {
         const edges = routeCatalog.get(net.id);
         // Explicit network consent + independently passing on-chain fork suite
         // + canonical venue identity; JSON claims alone are never authority.
-        const allowExecution = LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
+        const allowExecution = LIVE && LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
           && globalGateBlockers(gateReport).length === 0
           && forkTestPassed(gateReport, net.forkSuite, MULTIHOP_FORK_GATE_TEST)
           && catalogHasTrustedVenues(net, edges);
@@ -110,7 +112,7 @@ async function cycle() {
           infos: await Promise.all(net.providers.map(async (p) => {
             try { return {...await chainFor(net).providerInfo(p, net.stable.address, r.state.block), kind: p.kind, address: p.address}; }
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
-          })), preferKinds: eligible(net),
+          })), preferKinds: LIVE ? eligible(net) : null,
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
           at: c.at, allowExecution, rotation: (multiHopTurn.get(net.id) ?? 0),
         });
@@ -128,6 +130,11 @@ async function cycle() {
     const next = [];
     for (const [i, r] of results.entries()) {
       states.set(enabled[i].id, r.state);
+      if (!LIVE) for (const c of r.candidates) {
+        c.executable = false;
+        if (!c.blockers.includes('scan-only: funded execution disabled')) c.blockers.push('scan-only: funded execution disabled');
+        c.profitQualification = c.provider ? 'INDICATIVE_WITH_QUOTED_LENDER_FEE' : 'INCOMPLETE_MISSING_LENDER_FEE';
+      }
       try {
         // Full network cycle set is retained before the dashboard top-100 projection.
         routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});

@@ -56,3 +56,9 @@ test('server clears old opportunities before each scan and uses health-projected
  assert.match(s,/for\(const networkState of projection\.networks\)states\.set/);
  assert.match(s,/error:'scan cycle failed; current quotes not available'/);
 });
+
+test('failed-network scans supersede even read-only persisted route quotes',()=>{
+ const server=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.match(server,/r\.state\.status==='quotes-live'\?r\.candidates:\[\]/);
+ assert.match(server,/routeObservations\.record\(net,failed,\[\]/);
+});

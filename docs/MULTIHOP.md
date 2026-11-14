@@ -38,7 +38,7 @@ Every edge is an explicit token pair and DEX router/quoter, quoted at one block.
 
 ## Operational limits
 
-- Quotes are capped at 80 requests **per network per scan** by default; 100 candidate cycles, 150 directed edges and 10 hops maximum. A cap hit is reported as `multiHopTruncated=true`.
+- Quotes are capped at 80 requests **per network per scan** by default; 100 candidate cycles, 150 directed edges and 10 hops maximum. A cap hit is reported as `multiHopTruncated=true`. The scanner now eliminates graph branches that cannot return to the base asset within the remaining hop limit before consuming quotes. It rotates the first-hop priority by block number, improving coverage across repeated scans without increasing the quote budget.
 - Cycles cannot revisit an intermediate token or reuse the same pool.
 - Search runs only for explicitly catalogued networks. It never promotes a new token or router to the on-chain allowlist.
 - The upgraded `NexoraFlashExecutor` supports a maximum of 10 legs, but `maxRouteLegs` defaults to **4**. Only the cold owner can raise that cap. This changes deployed bytecode: use a newly validated deployment with a matching codehash gate report.
@@ -46,7 +46,7 @@ Every edge is an explicit token pair and DEX router/quoter, quoted at one block.
 - Long-cycle paths reject repeated intermediate tokens and reused pools; the off-chain engine enforces on-chain token/router allowlists, owner route approval, quote freshness, gas budget, flash fee, minimum net profit, actual `eth_estimateGas`, and two final `eth_call` simulations.
 - For long routes, the configured slippage is a **whole-route budget**, split conservatively across swaps; it is not independently multiplied by every hop. Final minimum-profit protection remains enforced atomically.
 - The environment opt-ins `MULTIHOP_EXECUTION_ENABLED=false` and `MULTIHOP_EXECUTION_CHAINS=` both default OFF/empty. For any candidate to be considered executable, a fresh validation gate, the passing network `test_multihop_realVenues_roundTrip` and exact matching to trusted network routers/fee tiers are also required.
-- **The fork's five/ten-hop test uses a REAL Aave lender but MOCK intermediate DEX venues** to verify atomic borrowing/repayment. This is not proof of live profitability or liquidity for a natural multi-token route. A route-specific fork with real production venues plus independent security review remains required before authorizing funded execution.
+- **The fork's five/ten-hop mechanics tests use a REAL Aave lender but MOCK intermediate DEX venues** to verify atomic borrowing/repayment. These have been renamed so they cannot satisfy the genuine `test_multihop_realVenues_roundTrip` gate. This is not proof of live profitability or liquidity for a natural multi-token route. A route-specific fork with real production venues plus independent security review remains required before authorizing funded execution.
 - The operator hot key must not be the owner wallet. Never enable funded execution solely on the basis of passing developer tests.
 - More swaps imply more gas, more slippage and more stale-quote exposure. A quoted positive net is not executable profit; the route would need two simulations of the final calldata and exact gas estimates before any authorized execution.
 - The catalog should contain real **connected** token paths with verified liquidity and token decimals. Avoid fee-on-transfer and rebasing tokens. Creating a catalog does not make it safe for execution.

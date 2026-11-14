@@ -75,3 +75,11 @@ test('nonce safety: every JsonRpcProvider disables the ethers request cache', ()
   const e2e = read('scripts/e2e-anvil.mjs');
   assert.doesNotMatch(e2e, /for \(const \w+ of \[exe\.\w+\(/);
 });
+
+import {hostAllowed} from '../lib/http-guard.mjs';
+test('AUDIT M-1: local dashboard rejects DNS rebinding hosts', () => {
+  for (const h of ['localhost:3080', '127.0.0.1:3080', 'LOCALHOST', '[::1]:3080']) assert.equal(hostAllowed(h, {}), true, h);
+  for (const h of ['attacker.example:3080', '127.0.0.1.attacker.example', '', undefined, 'localhost:3080@evil', 'local host']) assert.equal(hostAllowed(h, {}), false, String(h));
+  assert.equal(hostAllowed('nexora.internal:3080', {DASHBOARD_HOSTS: 'nexora.internal'}), true);
+  assert.match(read('server.js'), /if \(!hostAllowed\(req\.headers\.host\)\)/);
+});

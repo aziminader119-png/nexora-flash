@@ -121,6 +121,8 @@ async function cycle() {
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
         r.state.multiHopTruncated = extra.truncated;
+        r.state.multiHopRootsExplored = extra.rootsExplored ?? 0;
+        r.state.multiHopRootsEligible = extra.rootsEligible ?? 0;
         // Diagnostics never authorize trades. All per-hop traces preserve token raw units.
         if (!LIVE) {
           for (const c of extra.candidates) c.diagnostics = {

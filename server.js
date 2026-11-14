@@ -18,6 +18,7 @@ import {routeDepthBudgets} from './lib/route-budget.mjs';
 import {projectCurrentScan} from './lib/scan-reliability.mjs';
 import {shadowVerify} from './lib/shadow-verifier.mjs';
 import {ShadowMetrics} from './lib/shadow-metrics.mjs';
+import {ScanCircuitBreaker} from './lib/scan-breaker.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -82,6 +83,7 @@ const marketDiscoveryCache = new Map(); // Read-only, 60s TTL. Never feeds execu
 const marketDiscoveryInflight = new Map(); // Throttle upstream traffic on concurrent requests.
 const shadowQuality = new Map(); // Latest diagnostic by chain, never execution candidates.
 const shadowMetrics = new ShadowMetrics(path.join(DATA_DIR,'shadow-metrics.jsonl'));
+const scanBreaker=new ScanCircuitBreaker();
 const multiHopTurn = new Map(); // Rotate first-hop selection between scans (AUDIT M-A)
 let opportunities = [];
 let busy = false, lastScan = null, scans = 0;
@@ -111,12 +113,22 @@ async function cycle() {
     const eligible = (net) => (globalGateBlockers(gateReport).length ? [] : net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])));
     const routeCatalog = loadMultiHopCatalog(env.MULTIHOP_CATALOG_FILE, nets, log);
     const results = await Promise.all(enabled.map(async (net) => {
+      // Failed RPC nodes receive a bounded half-open recheck after cooldown.
+      // Never suppress journal reconciliation, which occurs above this block.
+      if (!LIVE) {
+        const permission=scanBreaker.canScan(net.id);
+        if(!permission.allowed)
+          return {state:{chainId:net.id,name:net.name,status:'unavailable',
+            block:null,error:'RPC_SCAN_CIRCUIT_OPEN',retryAfterMs:permission.retryAfterMs},
+            candidates:[]};
+      }
       // In scan-only mode, quote real lender availability/fees for analytics, but never
       // infer authorization from quote availability. LIVE keeps strict fork gating.
       const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: LIVE ? eligible(net) : null});
       r.state.multiHopQuotes = 0;
       r.state.multiHopCycles = 0;
       r.state.multiHopTruncated = false;
+      if (!LIVE) scanBreaker.record(net.id,r.state.status==='quotes-live',r.state.error);
       if (r.state.status !== 'quotes-live' || !routeCatalog.has(net.id)) return r;
       try {
         // A zero-result legacy USDC/WETH quote does not imply the catalog
@@ -402,6 +414,9 @@ const server = http.createServer(async (req, res) => {
         return json(res,503,{mode:'DISCOVERY_ONLY',chain,
           error:'published market data unavailable',actionable:false});
       }
+    }
+    if (req.method === 'GET' && u.pathname === '/api/scanner/health') {
+      return json(res,200,{mode:'SCAN_ONLY_RPC_HEALTH',networks:scanBreaker.snapshot()});
     }
     if (req.method === 'GET' && u.pathname === '/api/shadow/metrics') {
       return json(res,200,shadowMetrics.summary());

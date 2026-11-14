@@ -49,6 +49,7 @@ test('loan size comparison groups exact pool direction and fee, not just display
    {pool:'p4',tokenIn:C,tokenOut:B,fee:500},
    {pool:'p5',tokenIn:B,tokenOut:A,fee:500});
  z.legs[0].fee=500;
+ y.netEstimate=-5; // the smaller loan has the better on-chain quoted outcome
  const r=compareRouteSizes([x,y,z]);
  assert.equal(r.length,2);
  assert.equal(r.find(q=>q.sizes.length===2).sizes[0].size,500);

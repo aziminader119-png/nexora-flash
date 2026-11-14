@@ -43,3 +43,15 @@ test('review accepts 2–10 legs but does not mistake short unprobed route for q
  assert.equal(r.candidates.length,1);
  assert.equal(r.candidates[0].id,'long');
 });
+
+test('quoted profit does not qualify a route with unvalidated venues or gas ceiling blockers',()=>{
+ const unvalidated=long(18,{id:'unvalidated',blockers:[
+ 'multi-hop execution requires separate validation and explicit opt-in',
+ 'venue not fork-validated','scan-only: funded execution disabled']});
+ const gasTooHigh=long(20,{id:'gas',blockers:['gas above ceiling',
+ 'scan-only: funded execution disabled']});
+ const r=rankObservedRoutes([unvalidated,gasTooHigh]);
+ assert.equal(r.recommendedForFurtherReview.length,0);
+ assert.ok(r.topObserved.every(c=>c.status==='OTHER_BLOCKER'&&!c.eligibleForReview));
+ assert.equal(reviewObservedRoutes([unvalidated,gasTooHigh]).candidates.length,0);
+});

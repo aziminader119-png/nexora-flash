@@ -115,9 +115,9 @@ test('short 3-4 hop cycles remain in dedicated observations without affecting lo
 
 test('server runs 3 and 4 hop scanners in read-only mode with independent budgets',()=>{
  const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
- assert.match(source,/minDepth:3, maxDepth:3, maxQuotes:24,\s*allowExecution:false/);
- assert.match(source,/minDepth:4, maxDepth:4, maxQuotes:24,\s*allowExecution:false/);
- assert.match(source,/minDepth:5,\s*maxDepth:10, maxQuotes:80, allowExecution/);
+ assert.match(source,/minDepth:3, maxDepth:3, maxQuotes:budgetPlan.budgets.three,\s*allowExecution:false/);
+ assert.match(source,/minDepth:4, maxDepth:4, maxQuotes:budgetPlan.budgets.four,\s*allowExecution:false/);
+ assert.match(source,/minDepth:5,\s*maxDepth:10, maxQuotes:budgetPlan.budgets.long, allowExecution/);
  assert.match(source,/r\.state\.threeHopCycles = tri\.candidates\.length/);
  assert.match(source,/r\.state\.fourHopCycles = quad\.candidates\.length/);
  assert.match(source,/if \(LIVE && settings\.autoExecute\)/);
@@ -125,7 +125,7 @@ test('server runs 3 and 4 hop scanners in read-only mode with independent budget
 
 test('catalog 2-hop on-chain paths are new read-only discovery beside legacy pairs',()=>{
  const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
- assert.match(source,/minDepth:2, maxDepth:2, maxQuotes:24,\s*allowExecution:false/);
+ assert.match(source,/minDepth:2, maxDepth:2, maxQuotes:budgetPlan.budgets.two,\s*allowExecution:false/);
  assert.match(source,/catalogTwoHopCycles = duo\.candidates\.length/);
  assert.match(source,/quoteCache:sharedQuoteCache/);
  assert.match(source,/allowExecution:LIVE ? null : sharedQuoteCache|quoteCache:allowExecution \? null : sharedQuoteCache/);

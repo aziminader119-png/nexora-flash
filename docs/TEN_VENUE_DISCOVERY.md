@@ -3,8 +3,8 @@
 This change expands NEXORA's **market metadata discovery**, not its
 execution venues, pool approvals, or executable arbitrage reach.
 
-Curated protocols (as of 2026-11-14, relevant activity across Base /
-Arbitrum): Aerodrome, Uniswap, PancakeSwap, Metric, Fluid, WOOFi,
+Curated protocols (as of 2026-11-14, relevant activity across five
+supported EVM networks): Aerodrome, Uniswap, PancakeSwap, Metric, Fluid, WOOFi,
 Camelot, Curve, Sushi and DODO. Selection is informed by chain
 DEX-volume rankings (DefiLlama); it is *not* a promise that each one
 has swap pools exposed under the current DEX Screener `dexId`, or is
@@ -12,7 +12,11 @@ supported by NEXORA's transaction executor.
 
 **Network targeting:** Base: Aerodrome, Uniswap, PancakeSwap, Metric,
 Fluid, WOOFi, Curve, Sushi (8). Arbitrum: Uniswap, PancakeSwap, Metric,
-Fluid, WOOFi, Camelot, Curve, Sushi, DODO (9). Union: 10.
+Fluid, WOOFi, Camelot, Curve, Sushi, DODO (9).
+BNB Chain: Uniswap, PancakeSwap, Metric, WOOFi, Sushi, DODO (6).
+Polygon: Uniswap, Metric, WOOFi, Curve, Sushi, DODO (6).
+Optimism: Uniswap, WOOFi, Curve, Sushi (4).
+Union across all networks: 10.
 
 The API returns `venueCoverage.targets`, `observed` and `missing`
 rather than presenting a configured name as a connected DEX. A target
@@ -25,6 +29,9 @@ unknown IDs.
 Seed pairs per chain expanded:
 - Base: USDC, WETH, cbBTC, AERO.
 - Arbitrum: USDC, WETH, USDT, ARB, WBTC.
+- BNB Chain (DexScreener chain ID `bsc`): USDT, WBNB.
+- Polygon: USDC, WPOL.
+- Optimism: USDC, WETH.
 
 Every seed address is explicit. Discovery reads up to 250 records per
 token seed (1500 total maximum per chain), maintains a 60-second cache

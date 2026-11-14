@@ -13,7 +13,7 @@ import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
-import {discoverPublishedSpreads, fetchPublishedPairs} from './lib/market-discovery.mjs';
+import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -285,8 +285,13 @@ const server = http.createServer(async (req, res) => {
           const controller = new AbortController();
           const timeout = setTimeout(()=>controller.abort(),7000);
           try {
-            const pools = await fetchPublishedPairs(chain,{signal:controller.signal});
-            const data = discoverPublishedSpreads(pools,chain);
+            const discovery = await fetchPublishedPairsDetailed(chain,{signal:controller.signal});
+            const data = {...discoverPublishedSpreads(discovery.pairs,chain),
+              sourceCoverage:{requestedSeeds:discovery.requestedSeeds,
+                successfulSeeds:discovery.successfulSeeds,
+                failedSeeds:discovery.failedSeeds,
+                complete:discovery.coverageComplete},
+              incomplete:!discovery.coverageComplete};
             marketDiscoveryCache.set(chain,{at:Date.now(),data});
             return data;
           } finally {clearTimeout(timeout);}

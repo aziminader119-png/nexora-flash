@@ -11,7 +11,7 @@ import {discoverMultiHopCycles} from './lib/multihop.mjs';
 import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
 import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
-import {reviewObservedRoutes} from './lib/route-quality.mjs';
+import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -240,6 +240,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, routeObservations.stats());
     if (req.method === 'GET' && u.pathname === '/api/multihop/history')
       return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/routes/ranked') {
+      // Read-only ranking of the SAME latest opportunities as the dashboard.
+      // It cannot add execution permissions or assert a profitable trade.
+      return json(res,200,rankObservedRoutes(opportunities,{
+        minProfitUSD:settings.minProfitUSD,maxImpactBps:300,limit:20}));
+    }
     if (req.method === 'GET' && u.pathname === '/api/multihop/review') {
       // The newest observations are ranked independently of the legacy top-100
       // dashboard. Never turn a quote into a funded execution recommendation.

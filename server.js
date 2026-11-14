@@ -1,4 +1,4 @@
-// NEXORA v1.0 service: automatic multi-network scanning, gated unattended execution, single-page dashboard.
+// NEXORA v1.2 service: automatic multi-network scanning, gated unattended execution, single-page dashboard.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -175,7 +175,7 @@ const json = (res, code, obj) => { res.writeHead(code, {'Content-Type': 'applica
 function status() {
   const globalBlockers = globalGateBlockers(gateReport);
   return {
-    version: '1.0.0',
+    version: '1.2.0',
     mode: !LIVE ? 'SCAN_ONLY' : settings.paused ? 'PAUSED' : settings.autoExecute ? 'AUTO_EXECUTION' : 'LIVE_MANUAL',
     liveExecutionEnabled: LIVE, longRouteExecutionOptIn: LONG_ROUTES,
     longRouteChainIds: [...LONG_ROUTE_CHAIN_IDS], signer: signer?.address || null, contracts, loanCeiling: loanCeiling(),
@@ -252,7 +252,7 @@ const server = http.createServer(async (req, res) => {
 
 let timer;
 server.listen(PORT, BIND_HOST, () => {
-  log('info', `NEXORA v1.0 on ${BIND_HOST}:${PORT} | live=${LIVE} | gate=${globalGateBlockers(gateReport).length ? 'LOCKED' : 'passed'} | journal pending=${journal.pending().length}`);
+  log('info', `NEXORA v1.2 on ${BIND_HOST}:${PORT} | live=${LIVE} | gate=${globalGateBlockers(gateReport).length ? 'LOCKED' : 'passed'} | journal pending=${journal.pending().length}`);
   cycle();
   timer = setInterval(cycle, INTERVAL_MS);
 });

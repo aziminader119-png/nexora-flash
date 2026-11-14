@@ -380,7 +380,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
     if (req.method === 'GET' && u.pathname === '/api/discovery/spreads') {
       const chain = u.searchParams.get('chain') || 'base';
-      if (!['base','arbitrum'].includes(chain)) return json(res,400,{error:'unsupported discovery chain'});
+      if (!['base','arbitrum','bsc','polygon','optimism'].includes(chain))
+        return json(res,400,{error:'unsupported discovery chain'});
       const previous = marketDiscoveryCache.get(chain);
       if (previous && Date.now() - previous.at < 60_000)
         return json(res,200,{...previous.data,cacheAgeMs:Date.now()-previous.at});

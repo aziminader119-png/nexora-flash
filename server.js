@@ -13,6 +13,8 @@ import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
+import {refineLoanSizes} from './lib/route-refinement.mjs';
+import {routeDepthBudgets} from './lib/route-budget.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -87,7 +89,13 @@ async function cycle() {
     gateReport = loadGateReport(GATE_REPORT);
     // Recovery runs even while paused, so pending transactions always get resolved after restarts.
     if (signer) await Promise.all(nets.filter((n) => contracts[n.id]).map((n) => executor.reconcile(n).catch((e) => log('warning', `${n.name} recovery: ${e.message}`))));
-    if (settings.paused) { log('info', 'Paused: scanning and execution suspended'); return; }
+    if (settings.paused) {
+      // Do not keep displaying old candidates while a paused scanner has
+      // stopped refreshing quotes. No transactions are permitted here.
+      opportunities = [];
+      log('info', 'Paused: scanning and execution suspended');
+      return;
+    }
     const enabled = nets.filter((n) => settings.enabledChains.includes(n.id));
     // Prefer lenders whose fork round-trip passed for this network, so candidates are executable under the gate.
     // No passing or fresh gate report => no validated lender, even for quoted routes.
@@ -126,30 +134,61 @@ async function cycle() {
         };
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
+        const priorDepthObservations = [
+          ...opportunities.filter(c=>c.chainId===net.id),
+          ...(routeObservations.latest.get(net.id)?.cycles||[]),
+        ];
+        const budgetPlan = routeDepthBudgets(priorDepthObservations);
+        r.state.depthQuoteBudgets = budgetPlan.budgets;
+        const sharedQuoteCache = new Map(); // One exact-network/block cycle only
+        // Expand 2-hop discovery beyond the legacy stable/wrapped pair,
+        // but only along explicitly cataloged on-chain pools. It is NEVER
+        // promoted to a funded 2-hop opportunity.
+        const duo = await discoverMultiHopCycles({
+          ...quoteContext, minDepth:2, maxDepth:2, maxQuotes:budgetPlan.budgets.two,
+          allowExecution:false, quoteCache:sharedQuoteCache,
+        });
         const tri = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:24,
-          allowExecution:false,
+          ...quoteContext, minDepth:3, maxDepth:3, maxQuotes:budgetPlan.budgets.three,
+          allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const quad = await discoverMultiHopCycles({
-          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:24,
-          allowExecution:false,
+          ...quoteContext, minDepth:4, maxDepth:4, maxQuotes:budgetPlan.budgets.four,
+          allowExecution:false, quoteCache:sharedQuoteCache,
         });
         const long = await discoverMultiHopCycles({...quoteContext, minDepth:5,
-          maxDepth:10, maxQuotes:80, allowExecution});
+          maxDepth:10, maxQuotes:budgetPlan.budgets.long, allowExecution,
+          quoteCache:allowExecution ? null : sharedQuoteCache});
         const extra = {
-          candidates:[...tri.candidates,...quad.candidates,...long.candidates]
+          candidates:[...duo.candidates,...tri.candidates,...quad.candidates,...long.candidates]
             .sort((a,b)=>b.netEstimate-a.netEstimate),
-          scannedQuotes:tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
-          truncated:tri.truncated||quad.truncated||long.truncated,
-          rootsExplored:tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
-          rootsEligible:Math.max(tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
+          scannedQuotes:duo.scannedQuotes+tri.scannedQuotes+quad.scannedQuotes+long.scannedQuotes,
+          truncated:duo.truncated||tri.truncated||quad.truncated||long.truncated,
+          rootsExplored:duo.rootsExplored+tri.rootsExplored+quad.rootsExplored+long.rootsExplored,
+          rootsEligible:Math.max(duo.rootsEligible,tri.rootsEligible,quad.rootsEligible,long.rootsEligible),
         };
-        r.state.shortCycleQuotes = tri.scannedQuotes+quad.scannedQuotes;
+        r.state.catalogTwoHopQuotes = duo.scannedQuotes;
+        r.state.catalogTwoHopCycles = duo.candidates.length;
+        r.state.shortCycleQuotes = duo.scannedQuotes+tri.scannedQuotes+quad.scannedQuotes;
         r.state.shortCycleCount = tri.candidates.length+quad.candidates.length;
         r.state.threeHopCycles = tri.candidates.length;
         r.state.fourHopCycles = quad.candidates.length;
         r.state.longCycleQuotes = long.scannedQuotes;
         r.state.longCycleCount = long.candidates.length;
+        r.state.quoteCacheHits = duo.cacheHits+tri.cacheHits+quad.cacheHits+long.cacheHits;
+        // Only re-quote near-profitable observed paths at an intermediate
+        // loan amount. No public price, trade simulation, or authorization.
+        if (!LIVE) {
+          const refined = await refineLoanSizes({
+            ...quoteContext,candidates:extra.candidates,
+            maxQuotes:24,maxRoutes:2,nearMissUSD:1,
+          });
+          extra.candidates.push(...refined.candidates);
+          extra.candidates.sort((a,b)=>b.netEstimate-a.netEstimate);
+          extra.scannedQuotes+=refined.quotes;
+          r.state.refinementQuotes=refined.quotes;
+          r.state.refinementCycles=refined.refined;
+        }
         multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;

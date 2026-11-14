@@ -9,13 +9,15 @@ const pool=(n,price,extras={})=>({
  quoteToken:{address:B,symbol:'BBB'},priceNative:String(price),priceUsd:'100',
  liquidity:{usd:500000},volume:{h24:50000},...extras,
 });
-test('published signals compare only identical direction and token addresses; never promise a trade',()=>{
- const r=discoverPublishedSpreads([pool(1,1),pool(2,1.005),pool(3,1.006,{
+test('published signals normalize reversed token order and never promise a trade',()=>{
+ const r=discoverPublishedSpreads([pool(1,1),pool(2,1.005),pool(3,1/1.006,{
   baseToken:{address:B,symbol:'BBB'},quoteToken:{address:A,symbol:'AAA'}})],'base');
  assert.equal(r.observedPools,3);
- assert.equal(r.totalSignals,1);
+ assert.equal(r.totalSignals,3);
  assert.equal(r.signals[0].buyPool,pool(1,1).pairAddress.toLowerCase());
- assert.equal(r.signals[0].sellPool,pool(2,1).pairAddress.toLowerCase());
+ assert.equal(r.signals[0].sellPool,pool(3,1).pairAddress.toLowerCase());
+ assert.equal(r.signals[0].baseToken,A.toLowerCase());
+ assert.equal(r.signals[0].quoteToken,B.toLowerCase());
  assert.equal(r.signals[0].actionable,false);
  assert.equal(r.signals[0].executable,false);
  assert.equal(r.signals[0].qualification,'PUBLISHED_SPREAD_ONLY');
@@ -107,4 +109,20 @@ test('server exposes explicit incomplete published data coverage',()=>{
  assert.match(source,/fetchPublishedPairsDetailed\(chain/);
  assert.match(source,/incomplete:!discovery\.coverageComplete/);
  assert.match(source,/sourceCoverage:/);
+});
+
+test('bounded pool-pair comparisons prefer active liquid pools',()=>{
+ const many=Array.from({length:60},(_,i)=>pool(i+1,1+i/10000,{
+  volume:{h24:i+10000}
+ }));
+ const r=discoverPublishedSpreads(many,'base');
+ assert.equal(r.comparisonPoolCapPerPair,20);
+ assert.equal(r.observedPools,60);
+ assert.equal(r.totalSignals,190);
+ assert.equal(r.signals.every(x=>x.actionable===false&&x.executable===false),true);
+});
+test('different token contracts never compare even when displayed symbols match',()=>{
+ const r=discoverPublishedSpreads([pool(1,1),pool(2,1.01,{
+  quoteToken:{address:'0x'+'33'.repeat(20),symbol:'BBB'}})],'base');
+ assert.equal(r.totalSignals,0);
 });

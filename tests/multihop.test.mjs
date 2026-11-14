@@ -236,10 +236,10 @@ test('fair scanning samples multiple root branches in a single scan without exce
  o.settings.sizeSteps=[1];
  const r=await run(o,{maxQuotes:20,rotation:0});
  assert.equal(r.rootsEligible,6);
- assert.equal(r.rootsExplored,4);
- assert.equal(r.scannedQuotes,20);
- assert.equal(r.candidates.length,4);
- assert.equal(new Set(r.candidates.map(first=>first.legs[0].pool)).size,4);
+ assert.equal(r.rootsExplored,2);
+ assert.equal(r.scannedQuotes,10);
+ assert.equal(r.candidates.length,2);
+ assert.equal(new Set(r.candidates.map(first=>first.legs[0].pool)).size,2);
  assert.equal(r.truncated,true);
  assert.ok(r.candidates.every(c=>c.executable===false));
  assert.ok(o.chain.calls.every(call=>call.block===4321));
@@ -252,13 +252,13 @@ test('four loan sizes all get root coverage and first-hop rotation changes cover
  const second=await run(o,{maxQuotes:80,rotation:1});
  assert.deepEqual(new Set(first.candidates.map(c=>c.size)),new Set([50,100,250,500]));
  assert.deepEqual(new Set(second.candidates.map(c=>c.size)),new Set([50,100,250,500]));
- assert.equal(first.scannedQuotes,80);
- assert.equal(first.rootsExplored,16);
+ assert.equal(first.scannedQuotes,40);
+ assert.equal(first.rootsExplored,8);
  assert.equal(first.rootsEligible,5);
  const a=new Set(first.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
  const b=new Set(second.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
- assert.equal(a.size,4);
- assert.equal(b.size,4);
+ assert.equal(a.size,2);
+ assert.equal(b.size,2);
  assert.notDeepEqual(a,b);
  assert.ok([...first.candidates,...second.candidates].every(c=>c.mode==='MULTIHOP_OBSERVE_ONLY'&&!c.executable));
 });
@@ -283,4 +283,63 @@ test('a 3-hop scanner does not report a 4-hop path, or invent a partial cycle',a
   const four=await run(o,{minDepth:4,maxDepth:4,maxQuotes:24});
   assert.equal(four.candidates.length,1);
   assert.equal(four.candidates[0].executable,false);
+});
+
+test('shared read-only quote cache avoids repeated same-block work across route-depth scans',async()=>{
+ const o=setup(5);
+ // Both 3-hop and 5-hop cycles share their first two swaps.
+ const shortcut={...o.net.routeEdges[2],
+  pool:{...o.net.routeEdges[2].pool,key:'shortcut',router:addr(9898)},
+  tokenOut:{address:S,symbol:'USDC'}};
+ o.net.routeEdges.push(shortcut);
+ const cache=new Map();
+ const a=await run(o,{minDepth:3,maxDepth:3,maxQuotes:30,quoteCache:cache});
+ const calls=o.chain.calls.length;
+ const b=await run(o,{minDepth:5,maxDepth:5,maxQuotes:30,quoteCache:cache});
+ assert.equal(a.candidates.length,1);
+ assert.equal(b.candidates.length,1);
+ assert.ok(b.cacheHits>=2,'shared path prefixes reused from 3-hop scan');
+ assert.ok(o.chain.calls.length-calls<5);
+ assert.ok(o.chain.calls.every(q=>q.block===4321));
+ assert.equal(b.candidates[0].executable,false);
+});
+test('quote cache keys include block and exact amount, avoiding stale reuse',async()=>{
+ const o=setup(4);
+ const cache=new Map();
+ await run(o,{minDepth:4,maxDepth:4,maxQuotes:20,quoteCache:cache,block:100});
+ const n=o.chain.calls.length;
+ const second=await run(o,{minDepth:4,maxDepth:4,maxQuotes:20,quoteCache:cache,block:101});
+ assert.equal(second.cacheHits,0);
+ assert.equal(o.chain.calls.length,n+4);
+ assert.ok(o.chain.calls.slice(n).every(c=>c.block===101));
+});
+test('funded candidate path never reads externally provided quote cache',async()=>{
+ const o=setup(5);
+ const cache=new Map();
+ await run(o,{minDepth:5,maxDepth:5,maxQuotes:20,quoteCache:cache});
+ const prev=o.chain.calls.length;
+ const result=await run(o,{minDepth:5,maxDepth:5,maxQuotes:20,quoteCache:cache,allowExecution:true});
+ assert.equal(result.cacheHits,0);
+ assert.equal(o.chain.calls.length,prev+5);
+});
+
+test('ten-hop paths are reachable with several root branches and four loan sizes',async()=>{
+ const o=setup(10);
+ o.settings.sizeSteps=[0.05,0.1,0.25,0.5];
+ const base=[...o.net.routeEdges];
+ for(const offset of [10000,20000]){
+  const alt=base.map((e,i)=>({
+   ...e,pool:{...e.pool,key:'long'+offset+'-'+i,router:addr(offset+i)},
+   tokenIn:{...e.tokenIn,address:i===0?S:addr(offset+100+i-1)},
+   tokenOut:{...e.tokenOut,address:i===9?S:addr(offset+100+i)},
+  }));
+  o.net.routeEdges.push(...alt);
+ }
+ const r=await run(o,{maxQuotes:80,minDepth:5,maxDepth:10,rotation:0});
+ assert.equal(r.rootsEligible,3);
+ assert.equal(r.rootsExplored,8);
+ assert.equal(r.scannedQuotes,80);
+ assert.equal(r.candidates.length,8);
+ assert.deepEqual(new Set(r.candidates.map(c=>c.size)),new Set([50,100,250,500]));
+ assert.ok(r.candidates.every(c=>c.hopCount===10&&!c.executable));
 });

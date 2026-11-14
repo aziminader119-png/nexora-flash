@@ -52,4 +52,6 @@ test('server clears old opportunities before each scan and uses health-projected
  assert.match(s,/projectCurrentScan\(enabled,results\)/);
  assert.match(s,/opportunities=projection\.candidates/);
  assert.match(s,/if \(LIVE && settings\.autoExecute\)/);
+ assert.match(s,/for\(const networkState of projection\.networks\)states\.set/);
+ assert.match(s,/error:'scan cycle failed; current quotes not available'/);
 });

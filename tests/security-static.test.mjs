@@ -97,8 +97,8 @@ test('AUDIT H-1: mock-venue fork tests are not accepted as long-route execution 
       else if (source[end] === '}' && --depth === 0) break;
     }
     const body = source.slice(pos, end + 1);
-    assert.doesNotMatch(body, /Mock|_longRouteRoundTrip|new [A-Z]\\w*Router/, `${file}: real-venue gate cannot use mocks`);
+    assert.doesNotMatch(body, /Mock|_longRouteRoundTrip|new [A-Z]\w*Router/, `${file}: real-venue gate cannot use mocks`);
   }
-  assert.doesNotMatch(read('test/fork/ForkArbBase.sol'), /function test_multihop_roundTrip\\(/);
+  assert.doesNotMatch(read('test/fork/ForkArbBase.sol'), /function test_multihop_roundTrip\(/);
   for (const file of ['lib/engine.mjs','server.js']) assert.match(read(file), /MULTIHOP_FORK_GATE_TEST/);
 });

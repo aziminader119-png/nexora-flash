@@ -43,7 +43,7 @@ test('uses fixed allowlisted market endpoint; malformed response fails closed',a
  assert.equal(r.length,4);
  assert.equal(urls.length,4);
  assert.ok(urls.every(x=>x.startsWith('https://api.dexscreener.com/token-pairs/v1/base/')));
- await assert.rejects(fetchPublishedPairs('base',{fetchFn:async()=>({ok:true,json:async()=>({})})}),/Malformed/);
+ await assert.rejects(fetchPublishedPairs('base',{fetchFn:async()=>({ok:true,json:async()=>({})})}),/All published price seeds unavailable/);
 });
 
 test('ten curated venue targets are unique and never treated as trading permissions',()=>{

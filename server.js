@@ -10,6 +10,7 @@ import {scanNetwork} from './lib/scanner.mjs';
 import {discoverMultiHopCycles} from './lib/multihop.mjs';
 import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
 import {RouteObservations} from './lib/route-observations.mjs';
+import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -120,6 +121,24 @@ async function cycle() {
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
         r.state.multiHopTruncated = extra.truncated;
+        // Diagnostics never authorize trades. All per-hop traces preserve token raw units.
+        if (!LIVE) {
+          for (const c of extra.candidates) c.diagnostics = {
+            method:'AMOUNT_TRACE_ONLY',trace:traceAmounts(c, edges),liquidityRisk:'UNKNOWN',
+            probesIncomplete:true,caveat:'Raw token amounts are not comparable USD values.'};
+          try {
+            const samples = await probeRouteImpact({chain:chainFor(net),
+              candidates:extra.candidates,routeEdges:edges,block:r.state.block});
+            for (const c of extra.candidates) {
+              const d = samples.diagnostics.get(c.id);
+              if (d) c.diagnostics = d;
+            }
+            r.state.multiHopImpactProbes = samples.probesUsed;
+          } catch (e) {
+            r.state.multiHopImpactError = String(e.message || e).slice(0,160);
+            log('warning', net.name + ' read-only impact probe: ' + r.state.multiHopImpactError);
+          }
+        }
         r.candidates = [...r.candidates, ...extra.candidates].sort((a, b) => b.netEstimate - a.netEstimate);
       } catch (e) {
         r.state.multiHopError = String(e.message || e).slice(0,180);
@@ -217,6 +236,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, routeObservations.stats());
     if (req.method === 'GET' && u.pathname === '/api/multihop/history')
       return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/multihop/sizes') {
+      const result=routeObservations.cycles(Object.fromEntries(u.searchParams));
+      return json(res, 200, {...result,cycles:undefined,sizeComparisons:compareRouteSizes(result.cycles)});
+    }
     if (req.method === 'POST' && u.pathname.startsWith('/api/')) {
       if (!authorized(req)) return json(res, 403, {error: 'admin token required'});
       if (u.pathname === '/api/settings') {

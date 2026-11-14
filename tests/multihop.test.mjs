@@ -229,3 +229,36 @@ test('AUDIT M-B: quote budget is shared fairly across loan sizes (full size not 
   assert.ok(sizes.has(500));
   assert.equal(r.truncated, true);
 });
+
+
+test('fair scanning samples multiple root branches in a single scan without exceeding per-size quotes',async()=>{
+ const o=star(6);
+ o.settings.sizeSteps=[1];
+ const r=await run(o,{maxQuotes:20,rotation:0});
+ assert.equal(r.rootsEligible,6);
+ assert.equal(r.rootsExplored,4);
+ assert.equal(r.scannedQuotes,20);
+ assert.equal(r.candidates.length,4);
+ assert.equal(new Set(r.candidates.map(first=>first.legs[0].pool)).size,4);
+ assert.equal(r.truncated,true);
+ assert.ok(r.candidates.every(c=>c.executable===false));
+ assert.ok(o.chain.calls.every(call=>call.block===4321));
+});
+
+test('four loan sizes all get root coverage and first-hop rotation changes covered branches',async()=>{
+ const o=star(5);
+ o.settings.sizeSteps=[0.05,0.10,0.25,0.50];
+ const first=await run(o,{maxQuotes:80,rotation:0});
+ const second=await run(o,{maxQuotes:80,rotation:1});
+ assert.deepEqual(new Set(first.candidates.map(c=>c.size)),new Set([50,100,250,500]));
+ assert.deepEqual(new Set(second.candidates.map(c=>c.size)),new Set([50,100,250,500]));
+ assert.equal(first.scannedQuotes,80);
+ assert.equal(first.rootsExplored,16);
+ assert.equal(first.rootsEligible,5);
+ const a=new Set(first.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
+ const b=new Set(second.candidates.filter(c=>c.size===50).map(c=>c.legs[0].pool));
+ assert.equal(a.size,4);
+ assert.equal(b.size,4);
+ assert.notDeepEqual(a,b);
+ assert.ok([...first.candidates,...second.candidates].every(c=>c.mode==='MULTIHOP_OBSERVE_ONLY'&&!c.executable));
+});

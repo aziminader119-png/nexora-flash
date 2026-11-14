@@ -1,4 +1,5 @@
 name: NEXORA Read-only Market Scan
+# Post-audit scan-only acceptance snapshot; never accesses a wallet or sends orders.
 # Independent observational smoke test, not a validation gate or trading authorization.
 on:
   workflow_dispatch:

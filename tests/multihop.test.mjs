@@ -287,13 +287,18 @@ test('a 3-hop scanner does not report a 4-hop path, or invent a partial cycle',a
 
 test('shared read-only quote cache avoids repeated same-block work across route-depth scans',async()=>{
  const o=setup(5);
+ // Both 3-hop and 5-hop cycles share their first two swaps.
+ const shortcut={...o.net.routeEdges[2],
+  pool:{...o.net.routeEdges[2].pool,key:'shortcut',router:addr(9898)},
+  tokenOut:{address:S,symbol:'USDC'}};
+ o.net.routeEdges.push(shortcut);
  const cache=new Map();
  const a=await run(o,{minDepth:3,maxDepth:3,maxQuotes:30,quoteCache:cache});
  const calls=o.chain.calls.length;
  const b=await run(o,{minDepth:5,maxDepth:5,maxQuotes:30,quoteCache:cache});
- assert.equal(a.candidates.length,0);
+ assert.equal(a.candidates.length,1);
  assert.equal(b.candidates.length,1);
- assert.ok(b.cacheHits>=3,'shared path prefixes reused from 3-hop scan');
+ assert.ok(b.cacheHits>=2,'shared path prefixes reused from 3-hop scan');
  assert.ok(o.chain.calls.length-calls<5);
  assert.ok(o.chain.calls.every(q=>q.block===4321));
  assert.equal(b.candidates[0].executable,false);

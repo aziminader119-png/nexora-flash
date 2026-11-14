@@ -154,3 +154,40 @@ test('a failed intermediate quote fails closed without emitting a partial cycle'
   const r = await run(o, {allowExecution: true});
   assert.equal(r.candidates.length, 0);
 });
+
+test('bounded search prunes unreachable branches before consuming on-chain quote budget', async () => {
+  const o = setup(5);
+  const dead = Array.from({length: 6}, (_, i) => ({
+    pool: {key: 'dead-' + i, name: 'Dead DEX', type: 'v2', router: addr(2000 + i), routerKind: 0, fee: 0, forkValidated: true},
+    tokenIn: {address: i === 0 ? S : addr(3000 + i - 1), symbol: 'D' + i},
+    tokenOut: {address: addr(3000 + i), symbol: 'D' + (i + 1)},
+  }));
+  o.net.routeEdges = [...dead, ...o.net.routeEdges];
+  const result = await run(o, {maxQuotes: 5});
+  assert.equal(result.candidates.length, 1, 'reachable five-hop path should survive');
+  assert.equal(result.candidates[0].hopCount, 5);
+  assert.equal(result.scannedQuotes, 5, 'never spend a quote on a dead end');
+  assert.equal(o.chain.calls.length, 5);
+  assert.ok(o.chain.calls.every(x => x.router !== dead[0].pool.router));
+});
+
+test('first-hop traversal rotates by quoted block without weakening safety gates', async () => {
+  const o = setup(5);
+  const alternate = setup(5);
+  const alt = alternate.net.routeEdges.map((e, i) => ({
+    ...e,
+    pool: {...e.pool, key: 'alt-' + i, router: addr(5000 + i)},
+    tokenIn: {...e.tokenIn, address: e.tokenIn.address === S ? S : addr(6000 + i - 1)},
+    tokenOut: {...e.tokenOut, address: e.tokenOut.address === S ? S : addr(6000 + i)},
+  }));
+  o.net.routeEdges = [...o.net.routeEdges, ...alt];
+  const first = await run(o, {block: 4320, maxQuotes: 5});
+  const second = await run(o, {block: 4321, maxQuotes: 5});
+  assert.equal(first.candidates.length, 1);
+  assert.equal(second.candidates.length, 1);
+  assert.equal(first.candidates[0].legs.length, 5);
+  assert.equal(second.candidates[0].legs.length, 5);
+  assert.notEqual(first.candidates[0].legs[0].pool, second.candidates[0].legs[0].pool);
+  assert.equal(first.candidates[0].executable, false);
+  assert.equal(second.candidates[0].executable, false);
+});

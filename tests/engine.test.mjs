@@ -101,6 +101,11 @@ test('long-route trading requires separate opt-in, fork test and owner-approved 
   r = rig({longRouteEnabled: true, report});
   assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /on-chain route length not authorized/);
   assert.equal(r.chain.broadcasts.length, 0);
+
+  r = rig({longRouteEnabled: true, report});
+  r.chain.exe.maxRouteLegs = 6n;
+  assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /long route not approved by cold owner/);
+  assert.equal(r.chain.broadcasts.length, 0);
 });
 
 test('market moved after quote: simulation rejects, nothing broadcast', async () => {

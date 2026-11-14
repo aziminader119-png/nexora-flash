@@ -39,6 +39,20 @@ test('locked unless LIVE_EXECUTION is enabled', async () => {
   assert.equal(r.chain.broadcasts.length, 0);
 });
 
+test('corrupt persistent journal blocks new signing even with LIVE enabled and otherwise passing gates',async()=>{
+ const file=tmpFile();
+ const now=new Date().toISOString();
+ fs.writeFileSync(file,JSON.stringify({kind:'tx',status:'submitted',purpose:'arbitrage',
+  chainId:8453,nonce:5,hash:'0xold',at:now})+'\nCORRUPT_TAIL');
+ const r=rig({file});
+ assert.equal(r.journal.integrityOk,false);
+ const out=await r.ex.attempt(await r.scan(),r.net);
+ assert.equal(out.status,'blocked');
+ assert.match(out.reason,/journal integrity check failed/);
+ assert.equal(r.chain.broadcasts.length,0);
+ assert.equal(r.journal.pending(8453).length,1,'retain known pending transaction for reconciliation');
+});
+
 test('locked without a passing validation report', async () => {
   const r = rig({report: null});
   const res = await r.ex.attempt(await r.scan(), r.net);

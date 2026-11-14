@@ -286,6 +286,17 @@ contract NexoraFlashExecutor {
             if (l.kind == DEX_V2) require(l.fee == 0, "v2 leg has fee tier");
             else require(l.fee > 0, "missing fee tier");
             if (i + 1 < n) require(l.tokenOut == plan.legs[i + 1].tokenIn, "broken path");
+            if (n > 4) {
+                // Long cycles must remain simple: repeated intermediate tokens or
+                // reuse of the same pool (in either direction) are not accepted.
+                for (uint256 j = 0; j < i; j++) {
+                    Leg calldata earlier = plan.legs[j];
+                    if (i + 1 < n) require(l.tokenOut != earlier.tokenIn, "repeated intermediate token");
+                    bool samePair = (l.tokenIn == earlier.tokenIn && l.tokenOut == earlier.tokenOut)
+                        || (l.tokenIn == earlier.tokenOut && l.tokenOut == earlier.tokenIn);
+                    require(!(l.router == earlier.router && l.fee == earlier.fee && samePair), "reused dex pool");
+                }
+            }
         }
     }
 

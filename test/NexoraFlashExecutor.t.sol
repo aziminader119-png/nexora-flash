@@ -220,6 +220,10 @@ contract NexoraFlashExecutorTest is TestBase {
         vm.expectRevert(bytes("leg count"));
         exe.start(p); // Four legs remains the safe default.
         exe.setMaxRouteLegs(5); // Only the owner can increase this.
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("long route not approved"));
+        exe.start(p);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
         (uint256 profit, uint256 fee) = _run(p);
         assertEq(fee, 500_000, "loan premium");
         assertEq(profit, 99_500_000, "5-step gross 100 USD minus loan fee");
@@ -231,6 +235,7 @@ contract NexoraFlashExecutorTest is TestBase {
     function test_LongCycleTenLegsRepaysAndPaysProfit() public {
         NexoraFlashExecutor.Plan memory p = _longPlan(10);
         exe.setMaxRouteLegs(10);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
         (uint256 profit,) = _run(p);
         assertEq(profit, 99_500_000, "10-step profit");
         assertEq(usd.balanceOf(TREASURY), profit, "profit settlement");
@@ -254,9 +259,24 @@ contract NexoraFlashExecutorTest is TestBase {
         exe.setMaxRouteLegs(1);
     }
 
+    function test_LongRouteOwnerApprovalCanBeRevoked() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(5);
+        bytes32 routeHash = exe.longRouteHash(p);
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("owner only"));
+        exe.setLongRouteApproved(routeHash, true);
+        exe.setMaxRouteLegs(5);
+        exe.setLongRouteApproved(routeHash, true);
+        exe.setLongRouteApproved(routeHash, false);
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("long route not approved"));
+        exe.start(p);
+    }
+
     function test_LongCycleFailedFinalSwapIsAtomic() public {
         NexoraFlashExecutor.Plan memory p = _longPlan(10);
         exe.setMaxRouteLegs(10);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
         uint256 beforePool = usd.balanceOf(address(aave));
         uint256 beforeTreasury = usd.balanceOf(TREASURY);
         p.legs[9].minOut = type(uint256).max;
@@ -270,6 +290,7 @@ contract NexoraFlashExecutorTest is TestBase {
     function test_LongCycleProfitFloorRevertsAtomically() public {
         NexoraFlashExecutor.Plan memory p = _longPlan(5);
         exe.setMaxRouteLegs(5);
+        exe.setLongRouteApproved(exe.longRouteHash(p), true);
         p.minProfit = 100e6;
         uint256 beforePool = usd.balanceOf(address(aave));
         vm.prank(OPERATOR);

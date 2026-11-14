@@ -7,6 +7,8 @@ import {fileURLToPath} from 'node:url';
 import {NETWORKS, withEnvProviders, PROVIDER_FORK_TEST} from './lib/networks.mjs';
 import {loadSettings, applySettingsUpdate, loanCeiling} from './lib/settings.mjs';
 import {scanNetwork} from './lib/scanner.mjs';
+import {discoverMultiHopCycles} from './lib/multihop.mjs';
+import {loadMultiHopCatalog} from './lib/multihop-catalog.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -76,11 +78,45 @@ async function cycle() {
     // Prefer lenders whose fork round-trip passed for this network, so candidates are executable under the gate.
     // No passing or fresh gate report => no validated lender, even for quoted routes.
     const eligible = (net) => (globalGateBlockers(gateReport).length ? [] : net.providers.map((p) => p.kind).filter((k) => forkTestPassed(gateReport, net.forkSuite, PROVIDER_FORK_TEST[k])));
-    const results = await Promise.all(enabled.map((net) => scanNetwork({chain: chainFor(net), net, settings, preferKinds: eligible(net)})));
+    const routeCatalog = loadMultiHopCatalog(env.MULTIHOP_CATALOG_FILE, nets, log);
+    const results = await Promise.all(enabled.map(async (net) => {
+      const r = await scanNetwork({chain: chainFor(net), net, settings, preferKinds: eligible(net)});
+      r.state.multiHopQuotes = 0;
+      r.state.multiHopCycles = 0;
+      r.state.multiHopTruncated = false;
+      if (r.state.status !== 'quotes-live' || !routeCatalog.has(net.id)) return r;
+      try {
+        const c = r.candidates[0];
+        if (!c) return r;
+        const edges = routeCatalog.get(net.id);
+        const extra = await discoverMultiHopCycles({
+          chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
+          block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
+          nativePrice: BigInt(c.nativePriceUnits),
+          infos: r.state.providers.map((p) => ({
+            ...p, available: p.available == null ? 0n : BigInt(Math.trunc(p.available * (10 ** net.stable.decimals))),
+            feeParam: p.feeParam != null ? Number(p.feeParam) : 0,
+          })), preferKinds: eligible(net),
+          at: c.at,
+        });
+        r.state.multiHopQuotes = extra.scannedQuotes;
+        r.state.multiHopCycles = extra.candidates.length;
+        r.state.multiHopTruncated = extra.truncated;
+        r.candidates = [...r.candidates, ...extra.candidates].sort((a, b) => b.netEstimate - a.netEstimate);
+      } catch (e) {
+        r.state.multiHopError = String(e.message || e).slice(0,180);
+        log('warning', net.name + ' multi-hop read-only scan: ' + r.state.multiHopError);
+      }
+      return r;
+    }));
     const next = [];
     for (const [i, r] of results.entries()) {
       states.set(enabled[i].id, r.state);
-      next.push(...r.candidates.slice(0, 25));
+      // Reserve slots for long cycles so 2-leg routes cannot hide 5-10-hop
+      // observational opportunities, while preserving the dashboard's total limit.
+      const cycles = r.candidates.filter((c) => c.mode === 'MULTIHOP_OBSERVE_ONLY');
+      const direct = r.candidates.filter((c) => c.mode !== 'MULTIHOP_OBSERVE_ONLY');
+      next.push(...direct.slice(0, 20), ...cycles.slice(0, 5));
       const pos = r.candidates.filter((c) => c.netEstimate >= settings.minProfitUSD);
       if (r.state.status !== 'quotes-live') log('warning', `${r.state.name}: ${r.state.error}`);
       else log(pos.length ? 'candidate' : 'info', `${r.state.name}: ${r.candidates.length} quoted routes, ${pos.length} above $${settings.minProfitUSD} (block ${r.state.block})`);

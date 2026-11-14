@@ -184,6 +184,100 @@ contract NexoraFlashExecutorTest is TestBase {
         assertEq(profit, 9_500_000, "owner execution");
     }
 
+
+    // ------------------------------------------------------------ audited long-cycle opt-in (5-10 legs)
+    function _longPlan(uint256 n) internal returns (NexoraFlashExecutor.Plan memory p) {
+        require(n >= 5 && n <= 11, "test path length");
+        p = _plan(address(aave), 1e6);
+        p.legs = new NexoraFlashExecutor.Leg[](n);
+        address previous = address(usd);
+        for (uint256 i = 0; i < n; i++) {
+            bool last = i + 1 == n;
+            address next;
+            if (last) {
+                next = address(usd);
+            } else {
+                MockToken token = new MockToken("Intermediate", "MID", 18);
+                next = address(token);
+                exe.setToken(next, true);
+            }
+            MockRouter router = new MockRouter();
+            exe.setRouter(address(router), true);
+            if (i == 0) router.setRate(previous, next, 1e12, 1);
+            else if (last) router.setRate(previous, next, 11, 10e12);
+            else router.setRate(previous, next, 1, 1);
+            uint256 liquidity = last ? 100_000e6 : 100_000e18;
+            MockToken(next).mint(address(router), liquidity);
+            p.legs[i] = _leg(address(router), 0, previous, next, 0, 1);
+            previous = next;
+        }
+    }
+
+    function test_LongCycleFiveLegsRepaysAndPaysProfit() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(5);
+        uint256 beforePool = usd.balanceOf(address(aave));
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("leg count"));
+        exe.start(p); // Four legs remains the safe default.
+        exe.setMaxRouteLegs(5); // Only the owner can increase this.
+        (uint256 profit, uint256 fee) = _run(p);
+        assertEq(fee, 500_000, "loan premium");
+        assertEq(profit, 99_500_000, "5-step gross 100 USD minus loan fee");
+        assertEq(usd.balanceOf(address(aave)), beforePool + fee, "lender repaid");
+        assertEq(usd.balanceOf(TREASURY), profit, "receiver gets surplus");
+        assertEq(usd.balanceOf(address(exe)), 0, "executor starts and ends with no stable");
+    }
+
+    function test_LongCycleTenLegsRepaysAndPaysProfit() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(10);
+        exe.setMaxRouteLegs(10);
+        (uint256 profit,) = _run(p);
+        assertEq(profit, 99_500_000, "10-step profit");
+        assertEq(usd.balanceOf(TREASURY), profit, "profit settlement");
+        for (uint256 i = 0; i < p.legs.length; i++) {
+            assertEq(MockToken(p.legs[i].tokenIn).allowance(address(exe), p.legs[i].router), 0, "no leftover allowance");
+        }
+    }
+
+    function test_LongCycleElevenLegsAndUnauthorizedLimitRevert() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(11);
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("owner only"));
+        exe.setMaxRouteLegs(10);
+        exe.setMaxRouteLegs(10);
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("leg count"));
+        exe.start(p);
+        vm.expectRevert(bytes("bad leg limit"));
+        exe.setMaxRouteLegs(11);
+        vm.expectRevert(bytes("bad leg limit"));
+        exe.setMaxRouteLegs(1);
+    }
+
+    function test_LongCycleFailedFinalSwapIsAtomic() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(10);
+        exe.setMaxRouteLegs(10);
+        uint256 beforePool = usd.balanceOf(address(aave));
+        uint256 beforeTreasury = usd.balanceOf(TREASURY);
+        p.legs[9].minOut = type(uint256).max;
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("Too little received"));
+        exe.start(p);
+        assertEq(usd.balanceOf(address(aave)), beforePool, "loan is rolled back");
+        assertEq(usd.balanceOf(TREASURY), beforeTreasury, "no payout");
+    }
+
+    function test_LongCycleProfitFloorRevertsAtomically() public {
+        NexoraFlashExecutor.Plan memory p = _longPlan(5);
+        exe.setMaxRouteLegs(5);
+        p.minProfit = 100e6;
+        uint256 beforePool = usd.balanceOf(address(aave));
+        vm.prank(OPERATOR);
+        vm.expectRevert(bytes("insufficient profit"));
+        exe.start(p);
+        assertEq(usd.balanceOf(address(aave)), beforePool, "no lender loss");
+    }
+
     // ------------------------------------------------------------ reverted transactions (atomicity)
 
     function test_RevertUnprofitableRouteLeavesStateUnchanged() public {

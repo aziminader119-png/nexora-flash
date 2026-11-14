@@ -87,7 +87,13 @@ async function cycle() {
     gateReport = loadGateReport(GATE_REPORT);
     // Recovery runs even while paused, so pending transactions always get resolved after restarts.
     if (signer) await Promise.all(nets.filter((n) => contracts[n.id]).map((n) => executor.reconcile(n).catch((e) => log('warning', `${n.name} recovery: ${e.message}`))));
-    if (settings.paused) { log('info', 'Paused: scanning and execution suspended'); return; }
+    if (settings.paused) {
+      // Do not keep displaying old candidates while a paused scanner has
+      // stopped refreshing quotes. No transactions are permitted here.
+      opportunities = [];
+      log('info', 'Paused: scanning and execution suspended');
+      return;
+    }
     const enabled = nets.filter((n) => settings.enabledChains.includes(n.id));
     // Prefer lenders whose fork round-trip passed for this network, so candidates are executable under the gate.
     // No passing or fresh gate report => no validated lender, even for quoted routes.

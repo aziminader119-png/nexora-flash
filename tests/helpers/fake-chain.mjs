@@ -44,7 +44,7 @@ export class FakeChain {
       [MORPHO]: {ok: true, available: 0n, feeModel: 'zero', feeParam: 0},
     };
     this.exe = {owner: '0x0000000000000000000000000000000000000001', operator: OPERATOR, paused: false, codehash: CODEHASH,
-      providerKind: {[AAVE]: 1, [MORPHO]: 3}, routers: {[RA]: true, [RB]: true}, tokens: {[S]: true, [W]: true}, maxLoan: 1000n * 10n ** 6n};
+      providerKind: {[AAVE]: 1, [MORPHO]: 3}, routers: {[RA]: true, [RB]: true}, tokens: {[S]: true, [W]: true}, maxLoan: 1000n * 10n ** 6n, maxRouteLegs: 4n};
     this.gas = {gasPrice: 10n ** 9n, maxFeePerGas: 2n * 10n ** 9n, maxPriorityFeePerGas: 10n ** 8n};
     this.nonceLatest = 0;
     this.mempool = [];
@@ -91,7 +91,7 @@ export class FakeChain {
     this.guard();
     const e = this.exe;
     return {owner: e.owner, operator: e.operator, paused: e.paused, providerKind: e.providerKind[provider] || 0, maxLoan: e.maxLoan,
-      routersAllowed: routers.map((r) => !!e.routers[r]), tokensAllowed: tokens.map((t) => !!e.tokens[Object.keys(e.tokens).find((k) => lc(k) === lc(t))])};
+      maxRouteLegs: e.maxRouteLegs, routersAllowed: routers.map((r) => !!e.routers[r]), tokensAllowed: tokens.map((t) => !!e.tokens[Object.keys(e.tokens).find((k) => lc(k) === lc(t))])};
   }
   encodeStart(plan) { return '0x' + Buffer.from(ser({fn: 'start', plan})).toString('hex'); }
   encodePause() { return '0x' + Buffer.from(ser({fn: 'pause'})).toString('hex'); }
@@ -105,6 +105,7 @@ export class FakeChain {
     const kind = e.providerKind[plan.provider];
     if (!kind) throw Error('provider not allowed');
     if (plan.amount <= 0n || plan.amount > e.maxLoan) throw Error('loan limit');
+    if (plan.legs.length < 2 || plan.legs.length > Number(e.maxRouteLegs) || plan.legs.length > 10) throw Error('leg count');
     if (BigInt(Math.floor(this.now() / 1000)) > plan.deadline) throw Error('expired');
     if (plan.minProfit <= 0n) throw Error('positive min profit required');
     for (const l of plan.legs) if (!e.routers[l.router]) throw Error('router not allowed');

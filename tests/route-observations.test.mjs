@@ -122,3 +122,11 @@ test('server runs 3 and 4 hop scanners in read-only mode with independent budget
  assert.match(source,/r\.state\.fourHopCycles = quad\.candidates\.length/);
  assert.match(source,/if \(LIVE && settings\.autoExecute\)/);
 });
+
+test('catalog 2-hop on-chain paths are new read-only discovery beside legacy pairs',()=>{
+ const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.match(source,/minDepth:2, maxDepth:2, maxQuotes:24,\s*allowExecution:false/);
+ assert.match(source,/catalogTwoHopCycles = duo\.candidates\.length/);
+ assert.match(source,/quoteCache:sharedQuoteCache/);
+ assert.match(source,/allowExecution:LIVE ? null : sharedQuoteCache|quoteCache:allowExecution \? null : sharedQuoteCache/);
+});

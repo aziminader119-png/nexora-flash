@@ -15,6 +15,7 @@ import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs'
 import {rankRouteFamilies, chooseImpactProbes} from './lib/route-intelligence.mjs';
 import {refineLoanSizes} from './lib/route-refinement.mjs';
 import {routeDepthBudgets} from './lib/route-budget.mjs';
+import {projectCurrentScan} from './lib/scan-reliability.mjs';
 import {discoverPublishedSpreads, fetchPublishedPairsDetailed} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
@@ -84,6 +85,8 @@ let busy = false, lastScan = null, scans = 0;
 async function cycle() {
   if (busy) return;
   busy = true;
+  // Never expose last scan's expired prices if this cycle aborts.
+  opportunities = [];
   scans++;
   try {
     gateReport = loadGateReport(GATE_REPORT);
@@ -221,29 +224,30 @@ async function cycle() {
       }
       return r;
     }));
-    const next = [];
     for (const [i, r] of results.entries()) {
+      // A partially failed scan is never allowed to carry stale paths.
       states.set(enabled[i].id, r.state);
       if (!LIVE) for (const c of r.candidates) {
         c.executable = false;
         if (!c.blockers.includes('scan-only: funded execution disabled')) c.blockers.push('scan-only: funded execution disabled');
         c.profitQualification = c.provider ? 'INDICATIVE_WITH_QUOTED_LENDER_FEE' : 'INCOMPLETE_MISSING_LENDER_FEE';
       }
-      try {
-        // Full network cycle set is retained before the dashboard top-100 projection.
-        routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});
-      } catch (err) { log('warning', `${enabled[i].name} route observations: ${err.message}`); }
-      // Reserve 3-10-hop observation slots while preserving the dashboard's
-      // historical per-network projection and funded execution gates.
-      const cycles = r.candidates.filter((c) => c.hopCount >= 3);
-      const direct = r.candidates.filter((c) => !(c.hopCount >= 3));
-      next.push(...direct.slice(0, 20), ...cycles.slice(0, 5));
-      const pos = r.candidates.filter((c) => c.netEstimate >= settings.minProfitUSD);
-      if (r.state.status !== 'quotes-live') log('warning', `${r.state.name}: ${r.state.error}`);
-      else log(pos.length ? 'candidate' : 'info', `${r.state.name}: ${r.candidates.length} quoted routes, ${pos.length} above $${settings.minProfitUSD} (block ${r.state.block})`);
+      if (r.state.status === 'quotes-live') {
+        try {
+          routeObservations.record(enabled[i],r.state,r.candidates,{minimumProfit:settings.minProfitUSD});
+        } catch(err) { log('warning',`${enabled[i].name} route observations: ${err.message}`); }
+      }
+      const pos = r.candidates.filter(c=>c.netEstimate >= settings.minProfitUSD);
+      if(r.state.status !== 'quotes-live')
+        log('warning',`${enabled[i].name}: ${r.state.error||'scan unavailable'}`);
+      else log(pos.length?'candidate':'info',
+        `${enabled[i].name}: ${r.candidates.length} quoted routes, ${pos.length} above $${settings.minProfitUSD} (block ${r.state.block})`);
     }
-    for (const id of states.keys()) if (!settings.enabledChains.includes(id)) states.delete(id);
-    opportunities = next.sort((a, b) => b.netEstimate - a.netEstimate);
+    for(const id of states.keys()) if(!settings.enabledChains.includes(id))states.delete(id);
+    const projection=projectCurrentScan(enabled,results);
+    opportunities=projection.candidates;
+    if(projection.failures.length)
+      log('warning',`Partial scan: ${projection.healthyNetworks}/${projection.totalNetworks} networks healthy; failed-network candidates excluded`);
     if (LIVE && settings.autoExecute) {
       for (const net of enabled.filter((n) => settings.liveChains.includes(n.id))) {
         const best = opportunities.find((c) => c.chainId === net.id && c.executable && c.netEstimate >= settings.minProfitUSD);

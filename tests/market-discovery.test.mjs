@@ -126,3 +126,31 @@ test('different token contracts never compare even when displayed symbols match'
   quoteToken:{address:'0x'+'33'.repeat(20),symbol:'BBB'}})],'base');
  assert.equal(r.totalSignals,0);
 });
+
+test('all five supported networks have bounded real-token discovery seeds',async()=>{
+ for(const [chain,count] of [['base',4],['arbitrum',5],['bsc',2],['polygon',2],['optimism',2]]){
+  const urls=[];
+  const pairs=await fetchPublishedPairs(chain,{fetchFn:async url=>{
+   urls.push(url);return {ok:true,json:async()=>[]};
+  }});
+  assert.equal(pairs.length,0);
+  assert.equal(urls.length,count);
+  assert.ok(urls.every(url=>url.startsWith('https://api.dexscreener.com/token-pairs/v1/'+chain+'/')));
+  const coverage=discoverPublishedSpreads([],chain);
+  assert.equal(coverage.chain,chain);
+  assert.equal(coverage.mode,'DISCOVERY_ONLY');
+  assert.equal(coverage.totalSignals,0);
+  assert.ok(coverage.venueCoverage.targets>0);
+ }
+});
+test('BSC and Polygon multi-venue disparities remain non-executable even after discovery expansion',()=>{
+ for(const chain of ['bsc','polygon']){
+  const sample=pool(1,1,{chainId:chain});
+  const spread=pool(2,1.01,{chainId:chain,dexId:'uniswap'});
+  const r=discoverPublishedSpreads([sample,spread],chain);
+  // The metadata id of pool(1) is Uniswap, so a comparable published
+  // discrepancy may be found but no route may be promoted to execution.
+  assert.equal(r.totalSignals,1);
+  assert.equal(r.signals[0].executable,false);
+ }
+});

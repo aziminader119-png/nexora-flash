@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverPublishedSpreads,fetchPublishedPairs,DISCOVERY_VENUES} from '../lib/market-discovery.mjs';
+import fs from 'node:fs';
+import {discoverPublishedSpreads,fetchPublishedPairs,fetchPublishedPairsDetailed,DISCOVERY_VENUES} from '../lib/market-discovery.mjs';
 const A='0x'+'11'.repeat(20),B='0x'+'22'.repeat(20);
 const pool=(n,price,extras={})=>({
  chainId:'base',pairAddress:'0x'+n.toString(16).padStart(40,'0'),
@@ -42,7 +43,7 @@ test('uses fixed allowlisted market endpoint; malformed response fails closed',a
  assert.equal(r.length,4);
  assert.equal(urls.length,4);
  assert.ok(urls.every(x=>x.startsWith('https://api.dexscreener.com/token-pairs/v1/base/')));
- await assert.rejects(fetchPublishedPairs('base',{fetchFn:async()=>({ok:true,json:async()=>({})})}),/Malformed/);
+ await assert.rejects(fetchPublishedPairs('base',{fetchFn:async()=>({ok:true,json:async()=>({})})}),/All published price seeds unavailable/);
 });
 
 test('ten curated venue targets are unique and never treated as trading permissions',()=>{
@@ -79,4 +80,31 @@ test('favors liquid active markets over source order when a seed has more than 2
  assert.equal(r.length,1000);
  assert.ok(r.some(x=>x.pairAddress===many[299].pairAddress),'last but most active pool must be included');
  assert.ok(!r.some(x=>x.pairAddress===many[0].pairAddress),'lowest volume pool should be excluded');
+});
+
+test('one failed public market seed is transparent, yet remaining seeds can report indicative data',async()=>{
+ let calls=0;
+ const f=async()=>{calls++;if(calls===2)throw Error('timeout');
+  return {ok:true,json:async()=>[pool(calls,1)]};
+ };
+ const report=await fetchPublishedPairsDetailed('base',{fetchFn:f});
+ assert.equal(report.requestedSeeds,4);
+ assert.equal(report.successfulSeeds,3);
+ assert.equal(report.failedSeeds.length,1);
+ assert.equal(report.coverageComplete,false);
+ assert.equal(report.pairs.length,3);
+});
+test('a fully unavailable market API never returns misleading zero opportunities',async()=>{
+ await assert.rejects(fetchPublishedPairsDetailed('base',{fetchFn:async()=>{throw Error('unavailable')}}),/All published price seeds unavailable/);
+});
+test('strict legacy fetch rejects incomplete coverage instead of silently returning partial data',async()=>{
+ let calls=0;const f=async()=>{if(++calls===1)throw Error('oops');
+  return {ok:true,json:async()=>[]}};
+ await assert.rejects(fetchPublishedPairs('base',{fetchFn:f}),/Incomplete published price coverage/);
+});
+test('server exposes explicit incomplete published data coverage',()=>{
+ const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.match(source,/fetchPublishedPairsDetailed\(chain/);
+ assert.match(source,/incomplete:!discovery\.coverageComplete/);
+ assert.match(source,/sourceCoverage:/);
 });

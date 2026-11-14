@@ -47,7 +47,7 @@ test('aggregates persist without storing full candidate/token routes',()=>{
 
 test('bounded read-only pagination rejects invalid and abusive query parameters',()=>{
  const db=new RouteObservations();
- for(const q of [{limit:'2000'},{offset:'-1'},{minHops:'4'},{maxHops:'11'},
+ for(const q of [{limit:'2000'},{offset:'-1'},{minHops:'2'},{maxHops:'11'},
    {positiveOnly:'yes'},{chainId:'nope'}]) assert.throws(()=>db.cycles(q),/Invalid/);
  assert.throws(()=>db.cycles({minHops:'10',maxHops:'5'}),/cannot exceed/);
 });
@@ -102,4 +102,13 @@ test('impact filter fails closed when route lacks a complete on-chain probe',()=
  assert.equal(db.cycles({maxImpactBps:'300'}).total,1);
  assert.equal(db.cycles({maxImpactBps:'300'}).cycles[0].id,'cycle-1');
  assert.throws(()=>db.cycles({maxImpactBps:'10001'}),/Invalid/);
+});
+
+test('short 3-4 hop cycles remain in dedicated observations without affecting long paths',()=>{
+ const db=new RouteObservations();
+ db.record(net,state,[{...make(1,-0.8),hopCount:3},{...make(2,-0.4),hopCount:4},make(3,-10)]);
+ assert.equal(db.cycles().total,3);
+ assert.equal(db.cycles({minHops:'3',maxHops:'4'}).total,2);
+ assert.equal(db.cycles({minHops:'5',maxHops:'10'}).total,1);
+ assert.equal(db.stats().networks[0].cycles,3);
 });

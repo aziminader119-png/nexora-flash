@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {TestBase} from "../utils/TestBase.sol";
 import {NexoraFlashExecutor} from "../../contracts/NexoraFlashExecutor.sol";
+import {MockToken, MockRouter} from "../../contracts/mocks/Mocks.sol";
 
 interface IERC20F {
     function balanceOf(address) external view returns (uint256);
@@ -236,6 +237,91 @@ abstract contract ForkArbBase is TestBase {
         assertEq(IERC20F(n.stable).balanceOf(liquidityHolder), lenderBefore, "lender unchanged after revert");
         assertEq(IERC20F(n.stable).balanceOf(TREASURY), treasuryBefore, "receiver unchanged after revert");
     }
+
+
+    /// Local mock venues + REAL forked Aave pool. Confirms 5/10 callback
+    /// chaining, repayment, cold-owner route limit and atomic surplus transfer.
+    /// NOT a claim that a naturally occurring ten-pool route is profitable.
+    function _longRouteRoundTrip(uint256 hops) internal {
+        require(hops == 5 || hops == 10, "long route test length");
+        uint256 unit = 10 ** IERC20F(n.stable).decimals();
+        uint256 lenderBefore = IERC20F(n.stable).balanceOf(_aaveHolder());
+        require(lenderBefore >= loan, "real Aave lender lacks liquidity");
+
+        NexoraFlashExecutor.Plan memory p;
+        p.provider = n.aavePool;
+        p.asset = n.stable;
+        p.amount = loan;
+        p.maxFee = loan / 100;
+        p.minProfit = 1;
+        p.deadline = block.timestamp + 120;
+        p.legs = new NexoraFlashExecutor.Leg[](hops);
+
+        address previous = n.stable;
+        for (uint256 i = 0; i < hops; i++) {
+            bool last = i + 1 == hops;
+            address next;
+            if (last) next = n.stable;
+            else {
+                MockToken t = new MockToken("Fork Intermediate", "FORK", 18);
+                next = address(t);
+                exe.setToken(next, true);
+            }
+            MockRouter router = new MockRouter();
+            exe.setRouter(address(router), true);
+            if (i == 0) router.setRate(previous, next, 1e18, unit);
+            else if (last) router.setRate(previous, next, 11 * unit, 10e18);
+            else router.setRate(previous, next, 1, 1);
+            if (last) {
+                // Fund the mock final venue with REAL fork stable obtained
+                // through an actual deployed DEX; never mint real mainnet assets.
+                _fundLongRouteSink(address(router));
+                require(IERC20F(n.stable).balanceOf(address(router)) >= loan * 11 / 10, "mock sink lacks stable");
+            } else {
+                MockToken(next).mint(address(router), 100000e18);
+            }
+            p.legs[i] = NexoraFlashExecutor.Leg(address(router), 0, previous, next, 0, 1);
+            previous = next;
+        }
+        exe.setMaxRouteLegs(hops);
+        uint256 receiverBefore = IERC20F(n.stable).balanceOf(TREASURY);
+        vm.prank(OPERATOR);
+        (uint256 profit, uint256 paidFee) = exe.start(p);
+        uint256 expectedFee = _aaveFee();
+        assertEq(paidFee, expectedFee, "real lender fee on long-cycle fork");
+        assertEq(profit, loan / 10 - expectedFee, "exact long-cycle surplus");
+        assertEq(IERC20F(n.stable).balanceOf(TREASURY) - receiverBefore, profit, "profit to receiver");
+        assertGe(IERC20F(n.stable).balanceOf(_aaveHolder()), lenderBefore + expectedFee, "lender repaid");
+        assertEq(IERC20F(n.stable).balanceOf(address(exe)), 0, "no residual flash asset");
+    }
+
+    function _fundLongRouteSink(address sink) internal {
+        uint256 amount;
+        if (n.buyV3Fee != 0) amount = 25 ether;
+        else {
+            (, uint256 wrappedReserve) = _reserves();
+            amount = wrappedReserve / 16;
+        }
+        require(amount > 0, "missing pool liquidity");
+        vm.deal(address(this), amount + 1 ether);
+        IWrapped(n.wrapped).deposit{value: amount}();
+        if (n.buyV3Fee != 0) {
+            IERC20F(n.wrapped).approve(n.v3Router, amount);
+            IV3RouterFork(n.v3Router).exactInputSingle(IV3RouterFork.ExactInputSingleParams({
+                tokenIn: n.wrapped, tokenOut: n.stable, fee: n.buyV3Fee,
+                recipient: sink, deadline: block.timestamp,
+                amountIn: amount, amountOutMinimum: 0, sqrtPriceLimitX96: 0
+            }));
+        } else {
+            IERC20F(n.wrapped).approve(n.v2Router, amount);
+            address[] memory path = new address[](2);
+            path[0] = n.wrapped; path[1] = n.stable;
+            IV2Router(n.v2Router).swapExactTokensForTokens(amount, 0, path, sink, block.timestamp);
+        }
+    }
+
+    function test_multihop_roundTrip() public { _longRouteRoundTrip(5); }
+    function test_multihop_tenLegRoundTrip() public { _longRouteRoundTrip(10); }
 
     function test_aave_roundTrip() public { _roundTrip(n.aavePool, _aaveHolder(), _aaveFee()); }
     function test_aave_revertKeepsLenderWhole() public { _revertPath(n.aavePool, _aaveHolder(), _aaveFee()); }

@@ -30,6 +30,28 @@ test('plan: compounding slippage floors and exact struct', () => {
   assert.equal(p.deadline, 1_700_000_060n);
 });
 
+
+test('plan: owner-approved long routes serialize up to 10 swaps with per-leg floors', () => {
+  const options = {slippageBps: 30, minProfitUnits: 3_000000n, maxFeeUnits: 500000n, deadline: 1_700_000_060};
+  for (const length of [5, 10]) {
+    const intermediate = Array.from({length: length - 1}, (_, i) => '0x' + String(i + 11).padStart(40, '0'));
+    const tokens = [A, ...intermediate, A];
+    const legs = Array.from({length}, (_, i) => ({
+      router: '0x' + String(i + 31).padStart(40, '0'),
+      routerKind: 0, fee: 0, tokenIn: tokens[i], tokenOut: tokens[i + 1],
+      quotedOut: String(1010000000n + BigInt(i) * 1000000n),
+    }));
+    const plan = buildPlan(cand({legs}), options);
+    assert.equal(plan.legs.length, length);
+    assert.equal(plan.legs[0].tokenIn, A);
+    assert.equal(plan.legs.at(-1).tokenOut, A);
+    assert.ok(plan.legs.every((x) => x.minOut > 0n));
+    assert.ok(plan.legs.at(-1).minOut < BigInt(legs.at(-1).quotedOut));
+    assert.throws(() => buildPlan(cand({legs: [...legs, {...legs[0]}]}), options), /Invalid leg count|Not a round trip/);
+  }
+  assert.throws(() => validateFreshCandidate(cand({mode: 'MULTIHOP_OBSERVE_ONLY', executable: true}), {currentBlock: 100, now: 1_700_000_000_000, maxQuoteAgeMs: 6000}), /Route not executable/);
+});
+
 test('plan: rejects malformed routes', () => {
   const o = {slippageBps: 30, minProfitUnits: 1n, maxFeeUnits: 0n, deadline: 1};
   assert.throws(() => buildPlan(cand({legs: [cand().legs[0], {...cand().legs[1], tokenOut: B}]}), o), /round trip/);

@@ -66,6 +66,7 @@ const executor = new Executor({
 });
 
 const states = new Map();
+const multiHopTurn = new Map(); // Rotate first-hop selection between scans (AUDIT M-A)
 let opportunities = [];
 let busy = false, lastScan = null, scans = 0;
 
@@ -108,8 +109,9 @@ async function cycle() {
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: eligible(net),
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
-          at: c.at, allowExecution,
+          at: c.at, allowExecution, rotation: (multiHopTurn.get(net.id) ?? 0),
         });
+        multiHopTurn.set(net.id, ((multiHopTurn.get(net.id) ?? 0) + 1) % 1_000_000);
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
         r.state.multiHopTruncated = extra.truncated;

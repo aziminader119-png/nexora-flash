@@ -85,7 +85,9 @@ let busy = false, lastScan = null, scans = 0;
 async function cycle() {
   if (busy) return;
   busy = true;
-  // Never expose last scan's expired prices if this cycle aborts.
+  // Previous outcomes may weight read-only future scan budgets, but may
+  // NEVER be displayed or executed as fresh opportunities.
+  const previousScanCandidates=opportunities;
   opportunities = [];
   scans++;
   try {
@@ -138,7 +140,7 @@ async function cycle() {
         // Independent depth budgets guarantee that a 4-hop candidate can
         // finish even when the 3-hop roots are numerous. Both are quote-only.
         const priorDepthObservations = [
-          ...opportunities.filter(c=>c.chainId===net.id),
+          ...previousScanCandidates.filter(c=>c.chainId===net.id),
           ...(routeObservations.latest.get(net.id)?.cycles||[]),
         ];
         const budgetPlan = routeDepthBudgets(priorDepthObservations);

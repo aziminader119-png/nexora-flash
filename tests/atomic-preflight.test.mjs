@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {auditAtomicOpportunity} from '../lib/atomic-preflight.mjs';
 import {testNet} from './helpers/fake-chain.mjs';
-const net=testNet();
+const net={...testNet(),venues:[
+ {id:'r1',name:'V2 one',type:'v2',router:'0x'+'11'.repeat(20),forkValidated:true},
+ {id:'r2',name:'V2 two',type:'v2',router:'0x'+'22'.repeat(20),forkValidated:true},
+]};
 const A=net.stable.address,B=net.wrapped.address;
 const R1='0x'+'11'.repeat(20),R2='0x'+'22'.repeat(20);
 const exe='0x'+'33'.repeat(20),operator='0x'+'44'.repeat(20);
@@ -75,4 +78,13 @@ test('reverts, low simulated profit, and moving block fail closed',async()=>{
  let count=0;
  r=await audit(rig({blockNumber:async()=>++count===1?100:101}).chain);
  assert.equal(r.reason,'BLOCK_CHANGED_DURING_AUDIT');
+});
+
+test('unreviewed router fails even when catalog claims forkValidated and eth_call would profit',async()=>{
+ const altered={...c,legs:[{...c.legs[0],router:'0x'+'77'.repeat(20)},c.legs[1]]};
+ const {chain,calls}=rig();
+ const r=await audit(chain,altered);
+ assert.equal(r.reason,'UNREVIEWED_DEX_VENUE');
+ assert.equal(r.passed,false);
+ assert.equal(calls.sims,0);
 });

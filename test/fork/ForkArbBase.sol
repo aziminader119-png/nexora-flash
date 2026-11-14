@@ -321,8 +321,9 @@ abstract contract ForkArbBase is TestBase {
         }
     }
 
-    function test_multihop_roundTrip() public { _longRouteRoundTrip(5); }
-    function test_multihop_tenLegRoundTrip() public { _longRouteRoundTrip(10); }
+    // Only mock venue mechanics, must never satisfy the real-venues fork gate.
+    function test_longRouteMechanics_fiveLegs() public { _longRouteRoundTrip(5); }
+    function test_longRouteMechanics_tenLegs() public { _longRouteRoundTrip(10); }
 
     function test_aave_roundTrip() public { _roundTrip(n.aavePool, _aaveHolder(), _aaveFee()); }
     function test_aave_revertKeepsLenderWhole() public { _revertPath(n.aavePool, _aaveHolder(), _aaveFee()); }

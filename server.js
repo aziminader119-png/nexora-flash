@@ -12,6 +12,7 @@ import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catal
 import {RouteObservations} from './lib/route-observations.mjs';
 import {traceAmounts, probeRouteImpact, compareRouteSizes} from './lib/route-diagnostics.mjs';
 import {reviewObservedRoutes, rankObservedRoutes} from './lib/route-quality.mjs';
+import {discoverPublishedSpreads, fetchPublishedPairs} from './lib/market-discovery.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -71,6 +72,8 @@ const executor = new Executor({
 });
 
 const states = new Map();
+const marketDiscoveryCache = new Map(); // Read-only, 60s TTL. Never feeds executor.
+const marketDiscoveryInflight = new Map(); // Throttle upstream traffic on concurrent requests.
 const multiHopTurn = new Map(); // Rotate first-hop selection between scans (AUDIT M-A)
 let opportunities = [];
 let busy = false, lastScan = null, scans = 0;
@@ -268,6 +271,38 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, routeObservations.stats());
     if (req.method === 'GET' && u.pathname === '/api/multihop/history')
       return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/discovery/spreads') {
+      const chain = u.searchParams.get('chain') || 'base';
+      if (!['base','arbitrum'].includes(chain)) return json(res,400,{error:'unsupported discovery chain'});
+      const previous = marketDiscoveryCache.get(chain);
+      if (previous && Date.now() - previous.at < 60_000)
+        return json(res,200,{...previous.data,cacheAgeMs:Date.now()-previous.at});
+      // A single in-flight refresh per chain avoids upstream request floods.
+      // No discovery result is ever promoted to a trusted venue or executor.
+      if (!marketDiscoveryInflight.has(chain)) {
+        const job = (async () => {
+          const controller = new AbortController();
+          const timeout = setTimeout(()=>controller.abort(),7000);
+          try {
+            const pools = await fetchPublishedPairs(chain,{signal:controller.signal});
+            const data = discoverPublishedSpreads(pools,chain);
+            marketDiscoveryCache.set(chain,{at:Date.now(),data});
+            return data;
+          } finally {clearTimeout(timeout);}
+        })();
+        marketDiscoveryInflight.set(chain,job);
+        job.finally(() => {
+          if (marketDiscoveryInflight.get(chain) === job) marketDiscoveryInflight.delete(chain);
+        }).catch(()=>{}); // settle cleanup without an unhandled rejection
+      }
+      try {
+        const data = await marketDiscoveryInflight.get(chain);
+        return json(res,200,{...data,cacheAgeMs:0});
+      } catch {
+        return json(res,503,{mode:'DISCOVERY_ONLY',chain,
+          error:'published market data unavailable',actionable:false});
+      }
+    }
     if (req.method === 'GET' && u.pathname === '/api/routes/ranked') {
       // Read-only ranking of the SAME latest opportunities as the dashboard.
       // It cannot add execution permissions or assert a profitable trade.

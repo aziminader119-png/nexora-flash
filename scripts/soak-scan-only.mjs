@@ -48,18 +48,22 @@ while(Date.now()<deadline&&!stopped){
   ]);
   if(state.lastScan===previousScan)staleSamples++;
   previousScan=state.lastScan;
-  const sample={...state,
-   // Limit JSONL to essential non-secret fields; never persist logs,
-   // journal contents, admin settings or candidate details.
+  // Persist a strict allowlist of non-secret telemetry only. A trade
+  // history is represented as a boolean flag, never copied into JSONL.
+  const sample={
+   mode:state.mode,liveExecutionEnabled:state.liveExecutionEnabled,
+   longRouteExecutionOptIn:state.longRouteExecutionOptIn,
+   signer:state.signer?true:null,trades:Array.isArray(state.trades)&&state.trades.length?[{seen:true}]:[],
+   lastScan:state.lastScan,scans:state.scans,
+   settings:{autoExecute:state.settings?.autoExecute,liveChains:state.settings?.liveChains},
    networks:(state.networks||[]).map(n=>({
     chainId:n.chainId,name:n.name,status:n.status,block:n.block,
-    multiHopQuotes:n.multiHopQuotes,multiHopCycles:n.multiHopCycles
-   })),trades:Array.isArray(state.trades)?state.trades.slice(0,1):[],
-   opportunities:undefined,logs:undefined,attempts:undefined,
-   pending:undefined,settings:{autoExecute:state.settings?.autoExecute,
-     liveChains:state.settings?.liveChains},
-   contracts:undefined,registry:undefined,gate:undefined,shadow,
-   scannerHealth:scanner.networks,
+    multiHopQuotes:n.multiHopQuotes,multiHopCycles:n.multiHopCycles,
+   })),
+   shadow:{scans:shadow.scans,independentlyRequoted:shadow.independentlyRequoted,
+    retentionRate:shadow.retentionRate,failures:shadow.failures},
+   scannerHealth:(scanner.networks||[]).map(n=>({chainId:n.chainId,state:n.state,
+    failures:n.failures,retryAfterMs:n.retryAfterMs})),
   };
   statuses.push(sample);
   fs.appendFileSync(seriesFile,JSON.stringify(sample)+'\n',{mode:0o600});

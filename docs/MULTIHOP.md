@@ -55,3 +55,13 @@ Every edge is an explicit token pair and DEX router/quoter, quoted at one block.
 ## Deployment and security acceptance
 
 Before any production long-route trading, independently validate the exact token contracts and real production DEX pools on a recent fork, audit contract and engine changes, verify receipt/reorg/replacement handling, and approve a limited per-chain rollout with a cold-owner route hash. Verify gas and L2 data fees, time-to-live, slippage, expected failure gas, and a small funded pilot only after explicit approval. `LIVE_EXECUTION=false` must remain until that later approval. Current tests are developer tests, not an independent third-party audit.
+
+## Read-only contract authorization probe
+
+After a **separate** deployment has been audited, an operator may check a proposed route without any signer or live transactions:
+
+```bash
+node scripts/check-long-route.mjs 8453 0xEXECUTOR_ADDRESS /path/to/candidate.json
+```
+
+The command prints contract version, owner, the chain-bound route hash, route-length cap, route approval, token/router allowlists and blockers. It uses only RPC reads. Do not share private keys. A passing probe does not replace fork route validation, gas/MEV analysis, security audit or a separate live-trading authorization.

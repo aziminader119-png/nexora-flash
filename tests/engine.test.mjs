@@ -163,7 +163,7 @@ test('pending transaction blocks new broadcasts across a service restart, then r
   const r = rig({file, clock});
   r.chain.autoMine = false;
   const first = await r.ex.attempt(await r.scan(), r.net);
-  assert.equal(first.status, 'pending');
+  assert.equal(first.status, 'pending', `first attempt blocked: ${JSON.stringify(first)}`);
   // --- service restart: new journal + executor instances on the same files/chain
   const r2 = rig({file, clock, chain: r.chain});
   assert.equal(r2.journal.pending(8453).length, 1);

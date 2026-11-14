@@ -128,3 +128,29 @@ test('long-route catalog cannot self-approve unrecognized routers or fee tiers',
   assert.equal(catalogHasTrustedVenues(v3Known, [{...o.net.routeEdges[0],pool:v3pool}]),true);
   assert.equal(catalogHasTrustedVenues(v3Known, [{...o.net.routeEdges[0],pool:{...v3pool,fee:3000}}]),false);
 });
+
+test('all six depths 5..10 remain block-pinned and permission-gated', async () => {
+  for (let depth = 5; depth <= 10; depth++) {
+    const o = setup(depth);
+    o.settings.maxGasUnits = 5_000_000;
+    const observed = await run(o);
+    assert.equal(observed.candidates.length, 1, 'observed depth ' + depth);
+    assert.equal(observed.candidates[0].hopCount, depth);
+    assert.equal(observed.candidates[0].executable, false);
+    assert.equal(observed.candidates[0].mode, 'MULTIHOP_OBSERVE_ONLY');
+    const executable = await run(o, {allowExecution: true});
+    assert.equal(executable.candidates.length, 1);
+    assert.equal(executable.candidates[0].hopCount, depth);
+    assert.equal(executable.candidates[0].executable, true);
+    assert.ok(o.chain.calls.every((call) => call.block === 4321), 'block-pinned depth ' + depth);
+  }
+});
+
+test('a failed intermediate quote fails closed without emitting a partial cycle', async () => {
+  const o = setup(8);
+  const original = o.chain.quoteV2.bind(o.chain);
+  o.chain.quoteV2 = async (router, amount, a, b, block) =>
+    router === o.net.routeEdges[5].pool.router ? null : original(router, amount, a, b, block);
+  const r = await run(o, {allowExecution: true});
+  assert.equal(r.candidates.length, 0);
+});

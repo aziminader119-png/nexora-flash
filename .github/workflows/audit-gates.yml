@@ -1,0 +1,51 @@
+name: NEXORA Audit Gates
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NEXORA on clean Ubuntu
+        run: sudo bash install-ubuntu.sh
+      - name: Check safe mode, localhost security, and file permissions
+        run: |
+          set -euo pipefail
+          systemctl is-active nexora
+          S=$(curl -fsS http://127.0.0.1:3080/api/status)
+          test "$(echo "$S" | jq -r .mode)" = SCAN_ONLY
+          test "$(echo "$S" | jq -r .liveExecutionEnabled)" = false
+          test "$(echo "$S" | jq -r .signer)" = null
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: attacker.example' http://127.0.0.1:3080/api/status)" = 421
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:3080/api/settings -d '{}')" = 403
+          test "$(sudo stat -c '%a %U:%G' /etc/nexora/nexora.env)" = "640 root:nexora"
+          test "$(sudo stat -c '%a %U' /var/lib/nexora)" = "700 nexora"
+          sudo grep -q '^LIVE_EXECUTION=false$' /etc/nexora/nexora.env
+          sudo systemctl restart nexora
+          sleep 5
+          curl -fsS http://127.0.0.1:3080/api/health
+      - name: Rerun installer and preserve config
+        run: |
+          set -euo pipefail
+          before=$(sudo sha256sum /etc/nexora/nexora.env)
+          sudo bash install-ubuntu.sh
+          test "$before" = "$(sudo sha256sum /etc/nexora/nexora.env)"
+  lockfile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: '[ -f package-lock.json ] || npm install --package-lock-only --ignore-scripts --no-audit --no-fund'
+      - run: npm ci --ignore-scripts --no-audit --no-fund && npm test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json

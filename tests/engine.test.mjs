@@ -9,7 +9,7 @@ import {scanNetwork} from '../lib/scanner.mjs';
 import {DEFAULT_SETTINGS} from '../lib/settings.mjs';
 import {FakeChain, testNet, fakeSigner, passingReport, EXE, OPERATOR} from './helpers/fake-chain.mjs';
 
-function rig({live = true, report = passingReport(), file = null, settings: so = {}, chain: existing = null, clock = null} = {}) {
+function rig({live = true, longRouteEnabled = false, report = passingReport(), file = null, settings: so = {}, chain: existing = null, clock = null} = {}) {
   const clk = clock || {t: Date.now()};
   const now = () => clk.t;
   const chain = existing || new FakeChain({now});
@@ -20,7 +20,7 @@ function rig({live = true, report = passingReport(), file = null, settings: so =
   r.journal = new Journal(file, {now});
   r.ex = new Executor({
     journal: r.journal, settings: () => r.settings, chainFor: () => chain, signer: fakeSigner(), contracts: {8453: EXE},
-    gateReport: () => report, liveEnabled: live, now,
+    gateReport: () => report, liveEnabled: live, longRouteEnabled, now,
     onAutoPause: (why) => { r.settings = {...r.settings, paused: true}; r.paused.push(why); },
     sleep: async () => { clk.t += 1500; if (chain.autoMine) chain.mine(); },
     options: {receiptTimeoutMs: 9000},
@@ -74,6 +74,33 @@ test('full path: simulate, sign, broadcast, confirm; realized profit == simulate
   assert.ok(done.netAfterGas > 3, 'net after real gas above minimum');
   assert.equal(r.journal.trades().length, 1);
   assert.equal(r.journal.pending().length, 0);
+});
+
+
+test('long-route trading requires separate opt-in, fork test and owner-approved contract cap', async () => {
+  const makeLong = async (r) => {
+    const c = await r.scan();
+    const [buy, sell] = c.legs;
+    c.legs = [buy, sell, buy, sell, buy, sell].map((x) => ({...x}));
+    c.mode = 'MULTIHOP_EXECUTION_CANDIDATE';
+    c.hopCount = 6;
+    c.executable = true;
+    c.id += ':six-leg';
+    return c;
+  };
+  let r = rig();
+  assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /long-cycle execution disabled/);
+  assert.equal(r.chain.broadcasts.length, 0);
+
+  r = rig({longRouteEnabled: true});
+  assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /long-cycle fork execution gate missing/);
+  assert.equal(r.chain.broadcasts.length, 0);
+
+  const report = passingReport();
+  report.forge.fork.push({suite:'ForkBaseTest', test:'test_multihop_roundTrip', status:'Success'});
+  r = rig({longRouteEnabled: true, report});
+  assert.match((await r.ex.attempt(await makeLong(r), r.net)).reason, /on-chain route length not authorized/);
+  assert.equal(r.chain.broadcasts.length, 0);
 });
 
 test('market moved after quote: simulation rejects, nothing broadcast', async () => {

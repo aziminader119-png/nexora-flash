@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {discoverMultiHopCycles, validateCycleEdges} from '../lib/multihop.mjs';
+import {catalogHasTrustedVenues} from '../lib/multihop-catalog.mjs';
 import {DEFAULT_SETTINGS} from '../lib/settings.mjs';
 import {S, AAVE, testNet} from './helpers/fake-chain.mjs';
 
@@ -85,4 +86,45 @@ test('malformed route edges fail validation and no network catalog means no quot
   assert.equal((await run({...o,net:{...o.net,routeEdges:[]}})).scannedQuotes,0);
   o.net.routeEdges[1].pool.router='invalid';
   assert.throws(()=>validateCycleEdges(o.net.routeEdges,o.net.stable),/Invalid multi-hop edge/);
+});
+
+test('separate long-route flag allows only fully qualified executable candidates', async () => {
+  const five = setup(5);
+  const enabled = await run(five, {allowExecution: true});
+  assert.equal(enabled.candidates.length, 1);
+  assert.equal(enabled.candidates[0].mode, 'MULTIHOP_EXECUTION_CANDIDATE');
+  assert.equal(enabled.candidates[0].executable, true);
+  assert.equal(enabled.candidates[0].blockers.length, 0);
+  const ten = setup(10);
+  ten.settings.maxGasUnits = 5_000_000;
+  const tenResult = await run(ten, {allowExecution: true});
+  assert.equal(tenResult.candidates[0].hopCount, 10);
+  assert.equal(tenResult.candidates[0].executable, true);
+  const capped = await run(setup(10), {allowExecution: true});
+  assert.equal(capped.candidates[0].executable, false);
+  assert.match(capped.candidates[0].blockers.join(' '), /gas above configured units/);
+});
+
+test('untrusted pool or missing lender blocks long-route execution even when requested', async () => {
+  const o = setup(5);
+  o.net.routeEdges[0].pool.forkValidated = false;
+  const untrusted = await run(o, {allowExecution: true});
+  assert.equal(untrusted.candidates[0].executable, false);
+  assert.match(untrusted.candidates[0].blockers.join(' '), /fork-validated/);
+  const missing = await run(o, {allowExecution: true, preferKinds: []});
+  assert.equal(missing.candidates[0].executable, false);
+  assert.match(missing.candidates[0].blockers.join(' '), /no flash provider/);
+});
+
+test('long-route catalog cannot self-approve unrecognized routers or fee tiers', () => {
+  const o = setup(5);
+  const known = {...o.net, venues:[{type:'v2', router:o.net.routeEdges[0].pool.router, forkValidated:true}]};
+  assert.equal(catalogHasTrustedVenues(known, [o.net.routeEdges[0]]), true);
+  assert.equal(catalogHasTrustedVenues(known, o.net.routeEdges), false);
+  assert.equal(catalogHasTrustedVenues(known, [{...o.net.routeEdges[0], pool:{...o.net.routeEdges[0].pool, forkValidated:false}}]), false);
+  assert.equal(catalogHasTrustedVenues(known, [{...o.net.routeEdges[0], pool:{...o.net.routeEdges[0].pool, router:addr(99999)}}]), false);
+  const v3pool = {...o.net.routeEdges[0].pool,type:'v3',routerKind:2,quoter:addr(9000),fee:500};
+  const v3Known = {...o.net, venues:[{type:'v3',router:v3pool.router,routerKind:2,quoter:v3pool.quoter,fees:[500],forkValidated:true}]};
+  assert.equal(catalogHasTrustedVenues(v3Known, [{...o.net.routeEdges[0],pool:v3pool}]),true);
+  assert.equal(catalogHasTrustedVenues(v3Known, [{...o.net.routeEdges[0],pool:{...v3pool,fee:3000}}]),false);
 });

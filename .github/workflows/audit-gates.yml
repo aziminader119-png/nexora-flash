@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - run: '[ -f package-lock.json ] || npm install --package-lock-only --ignore-scripts --no-audit --no-fund'
-      - run: npm ci --ignore-scripts --no-audit --no-fund && npm test
+      - run: node --check scripts/check-long-route.mjs && node --check lib/multihop.mjs && npm ci --ignore-scripts --no-audit --no-fund && npm test
       - uses: actions/upload-artifact@v4
         with:
           name: package-lock

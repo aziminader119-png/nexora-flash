@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 /*
- * NEXORA Flash Executor v1.0
+ * NEXORA Flash Executor v1.1 (long-cycle capability; disabled by default)
  *
  * Atomic flash-loan arbitrage: borrow -> N allow-listed swaps -> repay principal + fee -> send surplus.
  * Every check that protects funds is on-chain; the off-chain bot cannot weaken them.
@@ -80,8 +80,9 @@ contract NexoraFlashExecutor {
     uint8 public constant DEX_V3_DEADLINE = 1;
     uint8 public constant DEX_V3_ROUTER02 = 2;
 
-    uint256 public constant MAX_LEGS = 4;
-    string public constant VERSION = "1.0.0";
+    uint256 public constant MAX_LEGS = 10;
+    uint256 public maxRouteLegs = 4; // owner must explicitly approve longer routes
+    string public constant VERSION = "1.1.0";
 
     struct Leg {
         address router;
@@ -111,6 +112,7 @@ contract NexoraFlashExecutor {
     mapping(address => bool) public allowedRouter;
     mapping(address => bool) public allowedToken;
     mapping(address => uint256) public maxLoan;
+    mapping(bytes32 => bool) public approvedLongRoute;
 
     // Execution context (only valid while status == ACTIVE).
     uint256 private constant IDLE = 1;
@@ -127,6 +129,8 @@ contract NexoraFlashExecutor {
     event RouterSet(address indexed router, bool enabled);
     event TokenSet(address indexed token, bool enabled);
     event MaxLoanSet(address indexed asset, uint256 amount);
+    event MaxRouteLegsSet(uint256 limit);
+    event LongRouteApprovalSet(bytes32 indexed routeHash, bool approved);
     event OperatorSet(address indexed newOperator);
     event ProfitReceiverSet(address indexed receiver);
     event Paused(bool isPaused, address indexed by);
@@ -170,6 +174,30 @@ contract NexoraFlashExecutor {
     function setMaxLoan(address asset, uint256 amount) external onlyOwner whenIdle {
         maxLoan[asset] = amount;
         emit MaxLoanSet(asset, amount);
+    }
+
+    /// Requires an explicit cold-wallet action before enabling 5-10 swap plans.
+    function setMaxRouteLegs(uint256 limit) external onlyOwner whenIdle {
+        require(limit >= 2 && limit <= MAX_LEGS, "bad leg limit");
+        maxRouteLegs = limit;
+        emit MaxRouteLegsSet(limit);
+    }
+
+    /// Bind approvals to this chain, asset, router/order, token direction, kind and
+    /// V3 fee tiers. Excludes dynamic quotes, sizes and minOut values.
+    function longRouteHash(Plan calldata plan) public view returns (bytes32 routeHash) {
+        routeHash = keccak256(abi.encode(block.chainid, plan.asset, plan.legs.length));
+        for (uint256 i = 0; i < plan.legs.length; i++) {
+            Leg calldata l = plan.legs[i];
+            routeHash = keccak256(abi.encode(routeHash, l.router, l.kind, l.tokenIn, l.tokenOut, l.fee));
+        }
+    }
+
+    /// Cold-owner route-level approval, independent of individual router/token allowlists.
+    function setLongRouteApproved(bytes32 routeHash, bool approved) external onlyOwner whenIdle {
+        require(routeHash != bytes32(0), "zero route hash");
+        approvedLongRoute[routeHash] = approved;
+        emit LongRouteApprovalSet(routeHash, approved);
     }
 
     function setOperator(address operator_) external onlyOwner whenIdle {
@@ -265,7 +293,7 @@ contract NexoraFlashExecutor {
         require(block.timestamp <= plan.deadline, "expired");
         require(plan.minProfit > 0, "positive min profit required");
         uint256 n = plan.legs.length;
-        require(n >= 2 && n <= MAX_LEGS, "leg count");
+        require(n >= 2 && n <= MAX_LEGS && n <= maxRouteLegs, "leg count");
         require(plan.legs[0].tokenIn == plan.asset, "route must start with asset");
         require(plan.legs[n - 1].tokenOut == plan.asset, "route must end with asset");
         for (uint256 i = 0; i < n; i++) {
@@ -277,7 +305,19 @@ contract NexoraFlashExecutor {
             if (l.kind == DEX_V2) require(l.fee == 0, "v2 leg has fee tier");
             else require(l.fee > 0, "missing fee tier");
             if (i + 1 < n) require(l.tokenOut == plan.legs[i + 1].tokenIn, "broken path");
+            if (n > 4) {
+                // Long cycles must remain simple: repeated intermediate tokens or
+                // reuse of the same pool (in either direction) are not accepted.
+                for (uint256 j = 0; j < i; j++) {
+                    Leg calldata earlier = plan.legs[j];
+                    if (i + 1 < n) require(l.tokenOut != earlier.tokenIn, "repeated intermediate token");
+                    bool samePair = (l.tokenIn == earlier.tokenIn && l.tokenOut == earlier.tokenOut)
+                        || (l.tokenIn == earlier.tokenOut && l.tokenOut == earlier.tokenIn);
+                    require(!(l.router == earlier.router && l.fee == earlier.fee && samePair), "reused dex pool");
+                }
+            }
         }
+        if (n > 4) require(approvedLongRoute[longRouteHash(plan)], "long route not approved");
     }
 
     // ------------------------------------------------------------------ provider callbacks

@@ -8,7 +8,7 @@ import {NETWORKS, withEnvProviders, PROVIDER_FORK_TEST} from './lib/networks.mjs
 import {loadSettings, applySettingsUpdate, loanCeiling} from './lib/settings.mjs';
 import {scanNetwork} from './lib/scanner.mjs';
 import {discoverMultiHopCycles} from './lib/multihop.mjs';
-import {loadMultiHopCatalog} from './lib/multihop-catalog.mjs';
+import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -27,6 +27,9 @@ const DATA_DIR = env.DATA_DIR || path.join(root, 'data');
 const CONFIG_PATH = env.CONFIG_PATH || path.join(DATA_DIR, 'settings.json');
 const GATE_REPORT = env.GATE_REPORT || path.join(root, 'validation', 'gate-report.json');
 const LIVE = env.LIVE_EXECUTION === 'true';
+// Separate opt-in. Five-to-ten leg routes remain disabled if this is unset.
+const LONG_ROUTES = env.MULTIHOP_EXECUTION_ENABLED === 'true';
+const LONG_ROUTE_CHAIN_IDS = new Set(String(env.MULTIHOP_EXECUTION_CHAINS || '').split(',').map((v) => Number(v.trim())).filter(Number.isInteger));
 
 fs.mkdirSync(DATA_DIR, {recursive: true, mode: 0o700});
 const log = createLogger({file: env.LOG_PATH || path.join(DATA_DIR, 'nexora.log.jsonl')});
@@ -56,6 +59,7 @@ if (signer) log('info', `Operator signer loaded: ${signer.address}`);
 
 const executor = new Executor({
   journal, settings: () => settings, chainFor, signer, contracts, liveEnabled: LIVE,
+  longRouteEnabled: LONG_ROUTES,
   gateReport: () => gateReport,
   onAutoPause: (reason) => { if (!settings.paused) { persistSettings({...settings, paused: true}); log('error', `AUTO-PAUSED: ${reason}`); } },
   log: (level, m) => log(level, m),
@@ -89,6 +93,12 @@ async function cycle() {
         const c = r.candidates[0];
         if (!c) return r;
         const edges = routeCatalog.get(net.id);
+        // Explicit network consent + independently passing on-chain fork suite
+        // + canonical venue identity; JSON claims alone are never authority.
+        const allowExecution = LONG_ROUTES && LONG_ROUTE_CHAIN_IDS.has(net.id)
+          && globalGateBlockers(gateReport).length === 0
+          && forkTestPassed(gateReport, net.forkSuite, 'test_multihop_roundTrip')
+          && catalogHasTrustedVenues(net, edges);
         const extra = await discoverMultiHopCycles({
           chain: chainFor(net), net: {...net, routeEdges: edges}, settings,
           block: r.state.block, gasPrice: BigInt(c.gasPriceWei),
@@ -98,7 +108,7 @@ async function cycle() {
             catch { return {kind: p.kind, address: p.address, ok: false, error: 'provider quote unavailable'}; }
           })), preferKinds: eligible(net),
           l1FeeWei: net.l1Fee === 'op-stack' ? (await chainFor(net).l1FeeWei(1100)) * 3n / 2n : 0n,
-          at: c.at,
+          at: c.at, allowExecution,
         });
         r.state.multiHopQuotes = extra.scannedQuotes;
         r.state.multiHopCycles = extra.candidates.length;
@@ -115,8 +125,8 @@ async function cycle() {
       states.set(enabled[i].id, r.state);
       // Reserve slots for long cycles so 2-leg routes cannot hide 5-10-hop
       // observational opportunities, while preserving the dashboard's total limit.
-      const cycles = r.candidates.filter((c) => c.mode === 'MULTIHOP_OBSERVE_ONLY');
-      const direct = r.candidates.filter((c) => c.mode !== 'MULTIHOP_OBSERVE_ONLY');
+      const cycles = r.candidates.filter((c) => c.hopCount >= 5);
+      const direct = r.candidates.filter((c) => !(c.hopCount >= 5));
       next.push(...direct.slice(0, 20), ...cycles.slice(0, 5));
       const pos = r.candidates.filter((c) => c.netEstimate >= settings.minProfitUSD);
       if (r.state.status !== 'quotes-live') log('warning', `${r.state.name}: ${r.state.error}`);
@@ -158,7 +168,8 @@ function status() {
   return {
     version: '1.0.0',
     mode: !LIVE ? 'SCAN_ONLY' : settings.paused ? 'PAUSED' : settings.autoExecute ? 'AUTO_EXECUTION' : 'LIVE_MANUAL',
-    liveExecutionEnabled: LIVE, signer: signer?.address || null, contracts, loanCeiling: loanCeiling(),
+    liveExecutionEnabled: LIVE, longRouteExecutionOptIn: LONG_ROUTES,
+    longRouteChainIds: [...LONG_ROUTE_CHAIN_IDS], signer: signer?.address || null, contracts, loanCeiling: loanCeiling(),
     gate: {passed: globalBlockers.length === 0, blockers: globalBlockers, generatedAt: gateReport?.generatedAt || null, codehash: gateReport?.executor?.runtimeCodehash || null},
     networks: nets.filter((n) => settings.enabledChains.includes(n.id)).map((n) => ({...(states.get(n.id) || {chainId: n.id, name: n.name, status: 'pending'}), liveBlockers: executor.liveBlockers(n), forkSuite: n.forkSuite})),
     registry: nets.map((n) => ({id: n.id, name: n.name, providers: n.providers.map((p) => p.kind), venues: n.venues.map((v) => ({name: v.name, forkValidated: v.forkValidated}))})),

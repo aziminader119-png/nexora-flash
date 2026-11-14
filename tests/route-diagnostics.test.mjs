@@ -43,6 +43,11 @@ test('probe failures and hard budgets fail closed without inventing impact measu
 });
 test('loan size comparison groups exact pool direction and fee, not just displayed pair',()=>{
  const x=candidate('a'),y=candidate('b','500','250','490'),z=candidate('c');
+ // Size comparison intentionally accepts only 5–10-hop cycles.
+ for (const c of [x,y,z]) c.legs.push(
+   {pool:'p3',tokenIn:A,tokenOut:C,fee:500},
+   {pool:'p4',tokenIn:C,tokenOut:B,fee:500},
+   {pool:'p5',tokenIn:B,tokenOut:A,fee:500});
  z.legs[0].fee=500;
  const r=compareRouteSizes([x,y,z]);
  assert.equal(r.length,2);

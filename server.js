@@ -242,11 +242,13 @@ async function cycle() {
         if (!c.blockers.includes('scan-only: funded execution disabled')) c.blockers.push('scan-only: funded execution disabled');
         c.profitQualification = c.provider ? 'INDICATIVE_WITH_QUOTED_LENDER_FEE' : 'INCOMPLETE_MISSING_LENDER_FEE';
       }
-      if (r.state.status === 'quotes-live') {
-        try {
-          routeObservations.record(enabled[i],r.state,r.candidates,{minimumProfit:settings.minProfitUSD});
-        } catch(err) { log('warning',`${enabled[i].name} route observations: ${err.message}`); }
-      }
+      // Failed network scans also supersede old read-only route history:
+      // no stale quote can leak through /api/multihop/* or intelligence.
+      try {
+        routeObservations.record(enabled[i],r.state,
+          r.state.status==='quotes-live'?r.candidates:[],
+          {minimumProfit:settings.minProfitUSD});
+      } catch(err) { log('warning',`${enabled[i].name} route observations: ${err.message}`); }
       const pos = r.candidates.filter(c=>c.netEstimate >= settings.minProfitUSD);
       if(r.state.status !== 'quotes-live')
         log('warning',`${enabled[i].name}: ${r.state.error||'scan unavailable'}`);
@@ -269,9 +271,13 @@ async function cycle() {
     // An exception in any scan phase invalidates the entire current quote
     // snapshot. Never display stale per-network health as if it succeeded.
     opportunities=[];
-    for(const net of nets.filter(n=>settings.enabledChains.includes(n.id)))
-      states.set(net.id,{chainId:net.id,name:net.name,status:'unavailable',
-        block:null,error:'scan cycle failed; current quotes not available'});
+    for(const net of nets.filter(n=>settings.enabledChains.includes(n.id))) {
+      const failed={chainId:net.id,name:net.name,status:'unavailable',
+        block:null,error:'scan cycle failed; current quotes not available'};
+      states.set(net.id,failed);
+      try {routeObservations.record(net,failed,[],{minimumProfit:settings.minProfitUSD});}
+      catch {/* never let error reporting prevent fail-closed invalidation */ }
+    }
     log('error', `Cycle failed: ${e.message}`);
   } finally {
     lastScan = new Date().toISOString();

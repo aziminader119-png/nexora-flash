@@ -245,6 +245,7 @@ async function cycle() {
     }
     for(const id of states.keys()) if(!settings.enabledChains.includes(id))states.delete(id);
     const projection=projectCurrentScan(enabled,results);
+    for(const networkState of projection.networks)states.set(networkState.chainId,networkState);
     opportunities=projection.candidates;
     if(projection.failures.length)
       log('warning',`Partial scan: ${projection.healthyNetworks}/${projection.totalNetworks} networks healthy; failed-network candidates excluded`);
@@ -255,6 +256,12 @@ async function cycle() {
       }
     }
   } catch (e) {
+    // An exception in any scan phase invalidates the entire current quote
+    // snapshot. Never display stale per-network health as if it succeeded.
+    opportunities=[];
+    for(const net of nets.filter(n=>settings.enabledChains.includes(n.id)))
+      states.set(net.id,{chainId:net.id,name:net.name,status:'unavailable',
+        block:null,error:'scan cycle failed; current quotes not available'});
     log('error', `Cycle failed: ${e.message}`);
   } finally {
     lastScan = new Date().toISOString();

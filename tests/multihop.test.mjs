@@ -86,3 +86,31 @@ test('malformed route edges fail validation and no network catalog means no quot
   o.net.routeEdges[1].pool.router='invalid';
   assert.throws(()=>validateCycleEdges(o.net.routeEdges,o.net.stable),/Invalid multi-hop edge/);
 });
+
+test('separate long-route flag allows only fully qualified executable candidates', async () => {
+  const five = setup(5);
+  const enabled = await run(five, {allowExecution: true});
+  assert.equal(enabled.candidates.length, 1);
+  assert.equal(enabled.candidates[0].mode, 'MULTIHOP_EXECUTION_CANDIDATE');
+  assert.equal(enabled.candidates[0].executable, true);
+  assert.equal(enabled.candidates[0].blockers.length, 0);
+  const ten = setup(10);
+  ten.settings.maxGasUnits = 5_000_000;
+  const tenResult = await run(ten, {allowExecution: true});
+  assert.equal(tenResult.candidates[0].hopCount, 10);
+  assert.equal(tenResult.candidates[0].executable, true);
+  const capped = await run(setup(10), {allowExecution: true});
+  assert.equal(capped.candidates[0].executable, false);
+  assert.match(capped.candidates[0].blockers.join(' '), /gas above configured units/);
+});
+
+test('untrusted pool or missing lender blocks long-route execution even when requested', async () => {
+  const o = setup(5);
+  o.net.routeEdges[0].pool.forkValidated = false;
+  const untrusted = await run(o, {allowExecution: true});
+  assert.equal(untrusted.candidates[0].executable, false);
+  assert.match(untrusted.candidates[0].blockers.join(' '), /fork-validated/);
+  const missing = await run(o, {allowExecution: true, preferKinds: []});
+  assert.equal(missing.candidates[0].executable, false);
+  assert.match(missing.candidates[0].blockers.join(' '), /no flash provider/);
+});

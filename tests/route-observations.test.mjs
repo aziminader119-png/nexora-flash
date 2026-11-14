@@ -83,3 +83,12 @@ test('72-hour rolling health aggregates summarize quote coverage and truncated s
  assert.equal(roll.truncatedScans,1);
  assert.equal(roll.errorScans,0);
 });
+
+test('scan-only uses on-chain lender quotes without ever allowing funded execution',()=>{
+ const source=fs.readFileSync(new URL('../server.js',import.meta.url),'utf8');
+ assert.match(source,/preferKinds: LIVE \? eligible\(net\) : null/);
+ assert.match(source,/const allowExecution = LIVE && LONG_ROUTES/);
+ assert.match(source,/c\.executable = false/);
+ assert.match(source,/scan-only: funded execution disabled/);
+ assert.match(source,/INCOMPLETE_MISSING_LENDER_FEE/);
+});

@@ -25,6 +25,7 @@ echo "==> Node.js 22 LTS (official tarball, SHA-256 verified)"
 NEED_NODE=1
 if command -v node >/dev/null 2>&1; then
   M=$(node -p 'process.versions.node.split(".")[0]'); [[ "$M" -ge 22 ]] && NEED_NODE=0
+  case "$(readlink -f "$(command -v node)")" in /home/*|/root/*|/snap/*) NEED_NODE=1 ;; esac
 fi
 if [[ $NEED_NODE -eq 1 ]]; then
   ARCH=$(dpkg --print-architecture); case "$ARCH" in amd64) NA=x64 ;; arm64) NA=arm64 ;; *) echo "unsupported arch $ARCH"; exit 1 ;; esac
@@ -37,6 +38,7 @@ if [[ $NEED_NODE -eq 1 ]]; then
   tar -xJf "$TMP/$TARBALL" -C /usr/local --strip-components=1
 fi
 NODE_BIN=$(readlink -f "$(command -v node)")
+case "$NODE_BIN" in /home/*|/root/*|/snap/*) NODE_BIN=/usr/local/bin/node ;; esac
 [[ -x "$NODE_BIN" ]] || { echo "Node.js executable not found" >&2; exit 1; }
 node -v; npm -v
 
@@ -65,7 +67,12 @@ cp -r "$SRC/server.js" "$SRC/lib" "$SRC/public" "$SRC/scripts" "$SRC/package.jso
 install -d -m 0755 "$APP/validation"
 [[ -f "$SRC/validation/gate-report.json" ]] && install -m 0644 "$SRC/validation/gate-report.json" "$APP/validation/gate-report.json"
 cd "$APP"
-if [[ -f package-lock.json ]]; then npm ci --omit=dev --no-audit --no-fund; else npm install --omit=dev --no-audit --no-fund; fi
+if [[ -f package-lock.json ]]; then
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+else
+  echo "WARNING: no package-lock.json; versions are not pinned" >&2
+  npm install --omit=dev --ignore-scripts --no-audit --no-fund
+fi
 chown -R root:root "$APP"; chmod -R go-w "$APP"
 
 echo "==> Environment"
@@ -142,9 +149,20 @@ fi
 systemctl daemon-reload
 systemctl enable nexora >/dev/null
 systemctl restart nexora
-sleep 3
+PORT_CFG=$(grep -E '^PORT=' "$ETC/nexora.env" | tail -1 | cut -d= -f2); PORT_CFG=${PORT_CFG:-3080}
+HEALTHY=0
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:${PORT_CFG}/api/health" >/dev/null 2>&1; then HEALTHY=1; break; fi
+  sleep 1
+done
 systemctl --no-pager --full status nexora | head -20 || true
-curl -fsS "http://127.0.0.1:3080/api/health" && echo
+[[ $HEALTHY -eq 1 ]] || { echo "ERROR: service did not become healthy; see journalctl -u nexora -n 100" >&2; exit 1; }
+MODE=$(curl -fsS "http://127.0.0.1:${PORT_CFG}/api/status" | jq -r .mode)
+echo "Service healthy; mode=${MODE}"
+if grep -qE '^LIVE_EXECUTION=false$' "$ETC/nexora.env" && [[ "$MODE" != "SCAN_ONLY" ]]; then
+  echo "ERROR: LIVE_EXECUTION=false but service reports mode ${MODE}" >&2
+  exit 1
+fi
 
 cat <<EOF
 

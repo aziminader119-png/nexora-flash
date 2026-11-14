@@ -286,3 +286,36 @@ test('same opportunity is never attempted twice', async () => {
   await r.ex.attempt(c, r.net);
   assert.match((await r.ex.attempt(c, r.net)).reason, /already attempted/);
 });
+
+test('AUDIT H-1: emergency stop during simulation prevents transaction signing and broadcast', async () => {
+  const r = rig();
+  const c = await r.scan();
+  const original = r.chain.simulateStart.bind(r.chain);
+  let stopped = false;
+  r.chain.simulateStart = async (...args) => {
+    if (!stopped) { stopped = true; await r.ex.emergencyStop([], 'stop during simulation'); }
+    return original(...args);
+  };
+  const out = await r.ex.attempt(c, r.net);
+  assert.equal(out.status, 'blocked');
+  assert.match(out.reason, /emergency stop/);
+  assert.equal(r.chain.broadcasts.length, 0);
+  assert.equal(r.journal.events.filter((e) => e.kind === 'tx').length, 0);
+});
+
+test('AUDIT M-2: mined transaction with delayed receipt cannot be marked replaced', async () => {
+  const r = rig();
+  r.chain.autoMine = false;
+  assert.equal((await r.ex.attempt(await r.scan(), r.net)).status, 'pending');
+  const hash = r.chain.broadcasts[0].hash;
+  r.chain.mine();
+  const original = r.chain.getReceipt.bind(r.chain);
+  r.chain.getReceipt = async () => null;
+  await r.ex.reconcile(r.net);
+  assert.equal(r.journal.events.some((e) => e.status === 'replaced'), false);
+  assert.equal(r.journal.pending(r.net.id).length, 1);
+  r.chain.getReceipt = original;
+  assert.deepEqual(await r.ex.reconcile(r.net), {pending: 0});
+  const confirmed = r.journal.events.find((e) => e.status === 'confirmed' && e.hash === hash);
+  assert.ok(confirmed && confirmed.profitUnits);
+});

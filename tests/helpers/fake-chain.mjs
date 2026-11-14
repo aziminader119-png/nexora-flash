@@ -161,7 +161,7 @@ export class FakeChain {
         if (call.fn === 'pause') this.exe.paused = true;
       } catch { r.status = 0; }
       this.receipts.set(tx.hash, r);
-      this.mined.set(tx.hash, tx);
+      this.mined.set(tx.hash, {...tx, blockNumber: this.block});
       this.nonceLatest++;
     }
   }

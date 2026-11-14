@@ -12,6 +12,7 @@ import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
 import {createLogger} from './lib/logger.mjs';
 import {makeChain} from './lib/chain-ethers.mjs';
+import {hostAllowed} from './lib/http-guard.mjs';
 import {loadSigner} from './lib/keys.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -140,6 +141,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  if (!hostAllowed(req.headers.host)) return json(res, 421, {error: 'host not allowed'});
   const u = new URL(req.url, 'http://localhost');
   try {
     if (u.pathname === '/api/health') return json(res, 200, {alive: true, lastScan, paused: settings.paused, pending: journal.pending().length});
@@ -161,6 +163,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (u.pathname === '/api/resume') {
         journal.append({kind: 'reset_failures', reason: 'operator resume'});
+        executor.resume();
         persistSettings({...settings, paused: false});
         log('settings', 'Resumed by operator (on-chain unpause, if needed, requires the owner wallet)');
         return json(res, 200, {ok: true});

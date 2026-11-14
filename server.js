@@ -9,6 +9,7 @@ import {loadSettings, applySettingsUpdate, loanCeiling} from './lib/settings.mjs
 import {scanNetwork} from './lib/scanner.mjs';
 import {discoverMultiHopCycles} from './lib/multihop.mjs';
 import {loadMultiHopCatalog, catalogHasTrustedVenues} from './lib/multihop-catalog.mjs';
+import {RouteObservations} from './lib/route-observations.mjs';
 import {Journal} from './lib/journal.mjs';
 import {Executor} from './lib/engine.mjs';
 import {loadGateReport, globalGateBlockers, forkTestPassed} from './lib/gates.mjs';
@@ -34,6 +35,8 @@ const LONG_ROUTE_CHAIN_IDS = new Set(String(env.MULTIHOP_EXECUTION_CHAINS || '')
 fs.mkdirSync(DATA_DIR, {recursive: true, mode: 0o700});
 const log = createLogger({file: env.LOG_PATH || path.join(DATA_DIR, 'nexora.log.jsonl')});
 const journal = new Journal(env.JOURNAL_PATH || path.join(DATA_DIR, 'execution-journal.jsonl'));
+// Separate read-only scanner data from funded execution history.
+const routeObservations = new RouteObservations(path.join(DATA_DIR, 'route-scan-history.jsonl'));
 
 let settings;
 try { settings = loadSettings(JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))); } catch { settings = loadSettings(null); }
@@ -125,6 +128,10 @@ async function cycle() {
     const next = [];
     for (const [i, r] of results.entries()) {
       states.set(enabled[i].id, r.state);
+      try {
+        // Full network cycle set is retained before the dashboard top-100 projection.
+        routeObservations.record(enabled[i], r.state, r.candidates, {minimumProfit:settings.minProfitUSD});
+      } catch (err) { log('warning', `${enabled[i].name} route observations: ${err.message}`); }
       // Reserve slots for long cycles so 2-leg routes cannot hide 5-10-hop
       // observational opportunities, while preserving the dashboard's total limit.
       const cycles = r.candidates.filter((c) => c.hopCount >= 5);
@@ -196,6 +203,13 @@ const server = http.createServer(async (req, res) => {
   try {
     if (u.pathname === '/api/health') return json(res, 200, {alive: true, lastScan, paused: settings.paused, pending: journal.pending().length});
     if (u.pathname === '/api/status' && req.method === 'GET') return json(res, 200, status());
+    // Read-only dedicated endpoints: the dashboard keeps its legacy response and 100-item limit.
+    if (req.method === 'GET' && u.pathname === '/api/multihop/cycles')
+      return json(res, 200, routeObservations.cycles(Object.fromEntries(u.searchParams)));
+    if (req.method === 'GET' && u.pathname === '/api/multihop/stats')
+      return json(res, 200, routeObservations.stats());
+    if (req.method === 'GET' && u.pathname === '/api/multihop/history')
+      return json(res, 200, routeObservations.scans(Object.fromEntries(u.searchParams)));
     if (req.method === 'POST' && u.pathname.startsWith('/api/')) {
       if (!authorized(req)) return json(res, 403, {error: 'admin token required'});
       if (u.pathname === '/api/settings') {

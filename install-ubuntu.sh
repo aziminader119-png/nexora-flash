@@ -74,6 +74,17 @@ else
   npm install --omit=dev --ignore-scripts --no-audit --no-fund
 fi
 chown -R root:root "$APP"; chmod -R go-w "$APP"
+# npm's file modes can inherit an operator's restrictive umask (e.g. 0077).
+# Root can import ethers while the unprivileged systemd user cannot traverse
+# node_modules/ethers/lib.esm, resulting in ERR_MODULE_NOT_FOUND. The app
+# contains no secrets: private settings and keys live under /etc and /var/lib.
+# Grant read+directory traversal, NOT write permissions, to the service.
+chmod -R a+rX "$APP/lib" "$APP/public" "$APP/scripts" "$APP/node_modules"
+chmod a+r "$APP/server.js" "$APP/package.json"
+chmod a+rx "$APP"
+# Fail at install time rather than leaving an endlessly restarting service.
+runuser -u nexora -- "$NODE_BIN" --input-type=module -e \
+  "await import('file://$APP/lib/chain-ethers.mjs'); await import('file://$APP/lib/route-diagnostics.mjs'); console.log('NEXORA_IMPORTS_OK')"
 
 echo "==> Environment"
 if [[ ! -f "$ETC/nexora.env" ]]; then

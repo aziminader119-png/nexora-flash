@@ -128,7 +128,8 @@ async function cycle() {
             probesIncomplete:true,caveat:'Raw token amounts are not comparable USD values.'};
           try {
             const samples = await probeRouteImpact({chain:chainFor(net),
-              candidates:extra.candidates,routeEdges:edges,block:r.state.block});
+              candidates:extra.candidates,routeEdges:edges,block:r.state.block,
+              maxRoutes:2,maxProbes:10});
             for (const c of extra.candidates) {
               const d = samples.diagnostics.get(c.id);
               if (d) c.diagnostics = d;

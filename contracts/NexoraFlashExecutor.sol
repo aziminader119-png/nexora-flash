@@ -112,6 +112,7 @@ contract NexoraFlashExecutor {
     mapping(address => bool) public allowedRouter;
     mapping(address => bool) public allowedToken;
     mapping(address => uint256) public maxLoan;
+    mapping(bytes32 => bool) public approvedLongRoute;
 
     // Execution context (only valid while status == ACTIVE).
     uint256 private constant IDLE = 1;
@@ -129,6 +130,7 @@ contract NexoraFlashExecutor {
     event TokenSet(address indexed token, bool enabled);
     event MaxLoanSet(address indexed asset, uint256 amount);
     event MaxRouteLegsSet(uint256 limit);
+    event LongRouteApprovalSet(bytes32 indexed routeHash, bool approved);
     event OperatorSet(address indexed newOperator);
     event ProfitReceiverSet(address indexed receiver);
     event Paused(bool isPaused, address indexed by);
@@ -179,6 +181,23 @@ contract NexoraFlashExecutor {
         require(limit >= 2 && limit <= MAX_LEGS, "bad leg limit");
         maxRouteLegs = limit;
         emit MaxRouteLegsSet(limit);
+    }
+
+    /// Bind approvals to this chain, asset, router/order, token direction, kind and
+    /// V3 fee tiers. Excludes dynamic quotes, sizes and minOut values.
+    function longRouteHash(Plan calldata plan) public view returns (bytes32 routeHash) {
+        routeHash = keccak256(abi.encode(block.chainid, plan.asset, plan.legs.length));
+        for (uint256 i = 0; i < plan.legs.length; i++) {
+            Leg calldata l = plan.legs[i];
+            routeHash = keccak256(abi.encode(routeHash, l.router, l.kind, l.tokenIn, l.tokenOut, l.fee));
+        }
+    }
+
+    /// Cold-owner route-level approval, independent of individual router/token allowlists.
+    function setLongRouteApproved(bytes32 routeHash, bool approved) external onlyOwner whenIdle {
+        require(routeHash != bytes32(0), "zero route hash");
+        approvedLongRoute[routeHash] = approved;
+        emit LongRouteApprovalSet(routeHash, approved);
     }
 
     function setOperator(address operator_) external onlyOwner whenIdle {
@@ -298,6 +317,7 @@ contract NexoraFlashExecutor {
                 }
             }
         }
+        if (n > 4) require(approvedLongRoute[longRouteHash(plan)], "long route not approved");
     }
 
     // ------------------------------------------------------------------ provider callbacks

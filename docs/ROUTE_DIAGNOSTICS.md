@@ -11,6 +11,7 @@ Use the existing localhost-only SSH tunnel. No admin token is needed for the rea
 ```bash
 curl -s 'http://127.0.0.1:3080/api/multihop/cycles?chainId=8453&limit=3' |
   jq '.cycles[] | {pair,size,netEstimate,profitQualification,diagnostics}'
+curl -s 'http://127.0.0.1:3080/api/multihop/cycles?chainId=8453&maxImpactBps=300' | jq '{total,cycles:[.cycles[]|{pair,size,netEstimate,diagnostics}]}'
 curl -s 'http://127.0.0.1:3080/api/multihop/sizes?chainId=8453&limit=200' |
   jq '{total,sizeComparisons}'
 ```
@@ -19,7 +20,7 @@ Each cycle can include `diagnostics.trace[]`: hop number, router/pool, token add
 
 To compare impact on a single hop, the scanner requests a quote for 10% of the hop's full input from the same pool and block. If the 10× scaled smaller quote exceeds the large-size quote, it records the approximate shortfall as `priceImpactBps`. `liquidityRisk` can be `HIGH` (>=1500 bps), `ELEVATED` (>=300 bps), `NO_LARGE_IMPACT_OBSERVED`, or `UNKNOWN`. This metric is approximate: it does not distinguish market price movements between pools or prove tradable liquidity, precise price impact, or profit.
 
-To avoid overloading RPC, extra impact quotes are **capped at 10 per network scan, for the two top-ranked candidate routes**; all other routes have a raw-amount trace with `impactStatus=NOT_PROBED`. Every extra quote uses the scanner's block number, and quote failures leave impact `UNKNOWN`. The new calls are read-only, and failures never unlock a trade.
+The optional `maxImpactBps` filter includes **only fully probed cycles** whose maximum measured hop impact is at or below that threshold. Unprobed and partially probed routes are excluded rather than being mislabeled safe. This is an observational liquidity-screening convenience, not transaction authorization.\n\nTo avoid overloading RPC, extra impact quotes are **capped at 10 per network scan, for the two top-ranked candidate routes**; all other routes have a raw-amount trace with `impactStatus=NOT_PROBED`. Every extra quote uses the scanner's block number, and quote failures leave impact `UNKNOWN`. The new calls are read-only, and failures never unlock a trade.
 
 The sizes endpoint groups **exact directed pool/token/fee-tier sequences**, not merely displayed pair names. This makes it possible to compare the `size`, `netEstimate`, quoted lender fee and gas estimates of the **same route** at multiple sizes, if they were quoted under the scan cap. A route may have only one quoted size. No artificial execution-price extrapolation occurs.
 
